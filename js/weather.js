@@ -5,6 +5,7 @@
 
 import * as db from './db.js';
 import { LEVELS, rateHours, summarizeDay } from './ampel.js';
+import { rideHints } from './service.js';
 import {
   esc, fmtNum, fmtTime, parseISODate, WEEKDAYS_SHORT, openSheet, toast, ICONS,
 } from './ui.js';
@@ -313,6 +314,7 @@ const state = {
   notice: null,     // Hinweis über der Vorhersage (z. B. GPS-Ersatz, Offline)
   error: null,      // Fehler, wenn gar keine Daten da sind
   loading: false,
+  hints: [],        // fällige Wartungen des aktiven Motorrads (Hinweis bei Fahrwetter)
 };
 
 export function init(el) {
@@ -351,6 +353,7 @@ export async function show(sub) {
   }
 
   state.settings = await db.getSettings();
+  state.hints = await rideHints().catch(() => []);
   if (state.forecast && Date.now() - state.loadedAt < REFRESH_AFTER) render();
   else await load();
 }
@@ -486,6 +489,7 @@ function render() {
 
   root.innerHTML = bar
     + renderHero(sel, data, now)
+    + renderRideHints(sel.summary.level)
     + renderDayCards(days)
     + renderHours(sel, now, t)
     + renderLegend(t)
@@ -536,6 +540,15 @@ function renderHero(d, data, now) {
         <div class="strip-labels"><span>0</span><span>6</span><span>12</span><span>18</span></div>
       </div>
     </section>`;
+}
+
+/** Fahrwetter + fällige Wartung → Hinweis (bei Rot fährt man ohnehin nicht) */
+function renderRideHints(level) {
+  if (!state.hints.length || level == null || level === 2) return '';
+  return `<div class="notice ride-hints" role="note"><span aria-hidden="true">🔧</span><div>
+      <b>${level === 0 ? 'Gutes Fahrwetter – vorher noch:' : 'Falls du fährst, vorher noch:'}</b>
+      <ul>${state.hints.map((h) => `<li>${h.icon} ${esc(h.text)}</li>`).join('')}</ul>
+      <a href="#service">Zum Service</a></div></div>`;
 }
 
 function renderDayCards(days) {

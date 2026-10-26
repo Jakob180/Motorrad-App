@@ -11,7 +11,7 @@ GitHub Pages und wird am iPhone über Safari → „Zum Home-Bildschirm" install
 | 1 | Grundgerüst, Logbuch, Backup, Offline-Cache | ✅ fertig |
 | 2 | Wetter am Standort + Fahr-Ampel | ✅ fertig |
 | 3 | Wetter entlang einer Route (Karte, OSRM) | ✅ fertig |
-| 4 | Service-Intervalle, Pickerl, Erinnerungen, .ics-Export | ⏳ |
+| 4 | Service-Intervalle, Pickerl, Erinnerungen, .ics-Export | ✅ fertig |
 | 5 | Push-Benachrichtigungen (Cloudflare Worker) | ⏳ |
 
 ## Projektstruktur
@@ -30,6 +30,7 @@ js/weather.js       Wetter-Tab: Standort, Vorhersage (Open-Meteo), Ortssuche
 js/ampel.js         Fahr-Ampel: Bewertung pro Stunde + Tagesfazit (ohne DOM, auch für den Push-Server)
 js/route.js         Wetter entlang einer Route: Karte, OSRM-Route, Wetterpunkte, beste Abfahrt, Favoriten
 js/logbook.js       Logbuch: Motorräder, Einträge, Verbrauch, Statistik, Diagramme
+js/service.js       Service: Intervalle, Pickerl, Fälligkeiten, Hinweise, Kalender-Export (.ics)
 js/settings.js      Einstellungen: Ampel-Grenzwerte, Wohnort, Backup, Speicher, Updates
 ```
 
@@ -103,6 +104,33 @@ Im Wetter-Tab oben auf **Route** wechseln.
 Open-Meteo (alle Wetterpunkte gemeinsam). Routen werden 30 Tage gecacht, das Wetter 30 Minuten –
 Abfahrtszeit oder Tempo ändern löst gar keine Anfrage aus. Kartenkacheln kommen von
 OpenStreetMap und brauchen Internet.
+
+## Service & Erinnerungen
+
+Im Tab **Service** (für das aktive Motorrad):
+
+- **Intervalle** nach km bzw. Betriebsstunden und/oder Zeit, z. B. *Ölwechsel alle 5.000 km oder
+  12 Monate*, *Kette schmieren alle 500 km*. **✨ Vorschläge** legt übliche Intervalle an – getrennt
+  für Straßenmotorräder (km) und Enduros (Bh). Bitte mit dem Handbuch abgleichen.
+- **„Zuletzt erledigt"** kommt automatisch aus dem Logbuch (z. B. letzter Ölwechsel-Eintrag, bei der
+  Kette zählen Einträge mit „Schmieren"). Steht es nicht im Logbuch, beim Intervall Datum/Stand eintragen.
+- **✓ Erledigt** öffnet den passenden Logbuch-Eintrag vorausgefüllt – nach dem Speichern startet das
+  Intervall neu. Eigene Aufgaben zählen Einträge „Sonstiges/Service/Reparatur" mit gleicher Bezeichnung.
+- **Status:** „Fällig in 320 km", „Fällig in 3 Wochen", „Überfällig seit …" – farbig markiert.
+  *Bald fällig* = weniger als 30 Tage bzw. die letzten 10 % des Intervalls. Bei reinen km-Intervallen
+  schätzt die App aus deiner Fahrleistung, wann es so weit ist.
+- **Kilometerstand aktualisieren**, wenn länger nichts im Logbuch steht – sonst stimmen km-Fälligkeiten nicht.
+- **Pickerl (§57a):** gelochten Monat eintragen. Begutachtung möglich ab dem Monat davor, Toleranzfrist
+  bis Ende des 4. Monats danach. **Erledigt** setzt das nächste Pickerl (Vorschlag: +1 Jahr) und trägt
+  die Kosten optional ins Logbuch ein.
+- **Hinweis-Banner** beim Öffnen der App, wenn bei irgendeinem Motorrad etwas bald fällig oder
+  überfällig ist („ausblenden" gilt bis morgen).
+- **Mit dem Wetter kombiniert:** Bei Fahrwetter erinnert der Wetter-Tab an fällige Wartungen. Bei einer
+  Route warnt die App auch, wenn ein Intervall *während* der Fahrt erreicht wird
+  („Kette schmieren: fällig in 100 km – die Route ist 123 km lang"; bei Bh über die geschätzte Fahrzeit).
+- **📅 Kalender:** erzeugt eine `.ics`-Datei (ganztägiger Termin mit Erinnerung). Am iPhone erscheint
+  die Termin-Vorschau → „Hinzufügen"; die Erinnerung kommt dann vom iPhone-Kalender. Klappt der
+  Download in der installierten App nicht, über **Teilen …** versuchen oder die Seite in Safari öffnen.
 
 ## Lokal testen
 

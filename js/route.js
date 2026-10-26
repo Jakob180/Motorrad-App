@@ -11,6 +11,7 @@ import {
 import {
   esc, fmtNum, fmtTime, WEEKDAYS_SHORT, field, openSheet, confirmDialog, toast, loadScript, loadCss, ICONS,
 } from './ui.js';
+import { rideHints } from './service.js';
 
 const OSRM_URL = 'https://router.project-osrm.org/route/v1/driving';
 const LEAFLET_JS = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js';
@@ -252,7 +253,14 @@ const state = {
   error: null,
   fitPending: false,        // Karte nach neuer Route auf die Strecke zoomen
   settings: null,
+  hints: [],                // Wartungen, die vor/während der Fahrt fällig sind
 };
+
+/** Wartungshinweise für die aktuelle Route (Länge bzw. Fahrzeit in Bh) neu ermitteln */
+async function refreshHints() {
+  const r = state.route;
+  state.hints = r ? await rideHints({ km: r.totalKm, hours: r.totalKm / state.speed }).catch(() => []) : [];
+}
 
 export async function init(el) {
   root = el;
@@ -282,6 +290,7 @@ export async function init(el) {
 export async function show() {
   state.settings = await db.getSettings();
   state.speed = state.settings.avgSpeed || state.speed;
+  await refreshHints();
   renderDeparture();
   renderResult();
   if (map) {
@@ -432,6 +441,12 @@ function renderResult() {
       <div class="hero-facts">${facts.map((f) => `<span>${f}</span>`).join('')}</div>
     </section>`;
 
+  if (state.hints.length) {
+    html += `<div class="notice ride-hints" role="note"><span aria-hidden="true">🔧</span><div>
+        <b>Vor der Fahrt am Motorrad:</b>
+        <ul>${state.hints.map((h) => `<li>${h.icon} ${esc(h.text)}</li>`).join('')}</ul>
+        <a href="#service">Zum Service</a></div></div>`;
+  }
   if (state.forecast.stale) {
     html += `<div class="notice"><span aria-hidden="true">ℹ️</span><span>${esc(state.forecast.error)}
       Wetter von ${fmtTime(new Date(state.forecast.ts))} Uhr.</span></div>`;
@@ -705,6 +720,7 @@ async function compute() {
     state.route = { ...route, samples, totalKm };
     state.fitPending = true;
     state.forecast = await fetchRouteForecast(samples);
+    await refreshHints();
   } catch (err) {
     state.error = err.message;
   } finally {
@@ -774,7 +790,10 @@ async function onChange(e) {
   const { name, value } = e.target;
   if (!['dayOffset', 'depMinutes', 'speed'].includes(name)) return;
   state[name] = Number(value);
-  if (name === 'speed') await db.saveSettings({ avgSpeed: state.speed });
+  if (name === 'speed') {
+    await db.saveSettings({ avgSpeed: state.speed });
+    await refreshHints(); // bei Betriebsstunden hängt die Fahrzeit am Tempo
+  }
   renderResult();
   drawRoute();
 }

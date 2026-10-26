@@ -4,23 +4,16 @@
 import * as db from './db.js';
 import { $, $$, esc, setBanner, toast, daysBetween, toISODate, ICONS } from './ui.js';
 import { getActiveBike, getBikes, openBikePicker } from './logbook.js';
+import { dueOverview } from './service.js';
 
 // Start-Tab beim Öffnen der App
 const DEFAULT_TAB = 'wetter';
-
-/** Platzhalter für Bereiche, die in späteren Schritten gebaut werden */
-const placeholder = (icon, title, text) => ({
-  init(el) {
-    el.innerHTML = `<div class="placeholder"><div class="e">${icon}</div><h2>${title}</h2><p>${text}</p></div>`;
-  },
-  show() {},
-});
 
 // Tabs: Titel, Modul (wird erst beim ersten Öffnen geladen), Motorrad-Auswahl in der Kopfzeile?
 const TABS = {
   wetter: { title: 'Kann ich fahren?', load: () => import('./weather.js') },
   logbuch: { title: 'Logbuch', load: () => import('./logbook.js'), bikeChip: true },
-  service: { title: 'Service', load: async () => placeholder('🔧', 'Service & Erinnerungen', 'Kommt in Schritt 4.'), bikeChip: true },
+  service: { title: 'Service', load: () => import('./service.js'), bikeChip: true },
   einstellungen: { title: 'Einstellungen', load: () => import('./settings.js') },
 };
 
@@ -107,6 +100,42 @@ async function checkBackupReminder() {
   });
 }
 
+/** Hinweis bei fälligen Wartungen/Pickerl (alle Motorräder); „ausblenden" gilt bis morgen */
+async function checkServiceBanner() {
+  const settings = await db.getSettings();
+  const today = toISODate(new Date());
+  const items = settings.serviceSnoozeUntil && settings.serviceSnoozeUntil > today ? [] : await dueOverview();
+  if (!items.length) {
+    setBanner('service', null);
+    return;
+  }
+  const multi = (await getBikes()).length > 1;
+  const shown = items.slice(0, 3).map((i) => `<li>${multi ? `${esc(i.bike.name)}: ` : ''}<b>${esc(i.name)}</b> – ${esc(i.text)}</li>`);
+  if (items.length > 3) shown.push(`<li>… und ${items.length - 3} weitere</li>`);
+  setBanner('service', {
+    type: items.some((i) => i.status === 'overdue') ? 'danger' : 'warn',
+    icon: '🔧',
+    title: items.length === 1 ? 'Wartung fällig' : `${items.length} Wartungen fällig`,
+    html: `<ul class="b-list">${shown.join('')}</ul>`,
+    actions: [{ label: 'Ansehen', onClick: () => { location.hash = '#service'; } }],
+    onDismiss: () => {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      db.saveSettings({ serviceSnoozeUntil: toISODate(tomorrow) });
+    },
+  });
+}
+
+let bannerTimer = null;
+/** Banner nach Datenänderungen gesammelt neu prüfen */
+function refreshBanners() {
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => {
+    checkBackupReminder();
+    checkServiceBanner();
+  }, 300);
+}
+
 function updateOnlineBanner() {
   setBanner('offline', navigator.onLine ? null : {
     type: 'info',
@@ -176,7 +205,7 @@ function start() {
   window.addEventListener('bike-changed', () => route());
   window.addEventListener('data-changed', (e) => {
     if (['bikes', 'all'].includes(e.detail.store)) updateBikeChip();
-    if (['entries', 'settings', 'all'].includes(e.detail.store)) checkBackupReminder();
+    if (['entries', 'intervals', 'bikes', 'settings', 'all'].includes(e.detail.store)) refreshBanners();
   });
 
   window.addEventListener('online', updateOnlineBanner);
@@ -189,6 +218,7 @@ function start() {
   route();
   updateOnlineBanner();
   checkBackupReminder();
+  checkServiceBanner();
   registerServiceWorker();
   requestPersistentStorage();
   db.cachePrune();

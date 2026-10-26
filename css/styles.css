@@ -347,10 +347,6 @@ main {
 .empty h3 { color: var(--text); font-size: 20px; }
 .empty .btn { margin-top: 14px; }
 
-/* Platzhalter für noch nicht gebaute Tabs */
-.placeholder { padding: 48px 16px; text-align: center; color: var(--text-dim); }
-.placeholder .e { font-size: 64px; }
-
 /* ---------- Motorräder (Garage) ---------- */
 
 .bike {
@@ -835,6 +831,47 @@ details.card summary { min-height: 32px; font-weight: 700; cursor: pointer; }
 
 .fav-row { display: flex; gap: 6px; align-items: center; }
 .fav-row .item { flex: 1; min-width: 0; }
+
+/* ---------- Service ---------- */
+
+.svc { border-left: 5px solid var(--surface-3); }
+.svc.s-ok { border-left-color: var(--green); }
+.svc.s-soon { border-left-color: var(--yellow); }
+.svc.s-overdue { border-left-color: var(--red); }
+.svc-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 10px; }
+.svc-ico { display: grid; place-items: center; flex: none; width: 46px; height: 46px; border-radius: 12px; background: var(--surface-2); font-size: 24px; }
+.svc-main { flex: 1; min-width: 0; }
+.svc-name { font-size: 18px; font-weight: 750; }
+.svc-status { font-size: 17px; font-weight: 700; }
+.s-ok .svc-status { color: var(--green); }
+.s-soon .svc-status { color: var(--yellow); }
+.s-overdue .svc-status { color: var(--red); }
+.s-unknown .svc-status { color: var(--text-dim); }
+.svc-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 750;
+  vertical-align: middle;
+}
+.s-soon .svc-badge { background: var(--yellow-soft); color: var(--yellow); }
+.s-overdue .svc-badge { background: var(--red-soft); color: var(--red); }
+.s-ok .svc-badge { background: var(--green-soft); color: var(--green); }
+.svc-bar { height: 8px; margin-bottom: 10px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.svc-bar i { display: block; height: 100%; border-radius: 4px; background: var(--green); }
+.s-soon .svc-bar i { background: var(--yellow); }
+.s-overdue .svc-bar i { background: var(--red); }
+.svc-hero .hero-top { margin: 0; }
+
+.b-list { margin: 6px 0 0; padding-left: 18px; }
+.b-list li { margin: 2px 0; }
+
+.ride-hints { margin-bottom: 14px; }
+.ride-hints ul { margin: 6px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
 
 /* ---------- Toasts ---------- */
 
