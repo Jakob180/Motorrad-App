@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- App-Icon: Motorrad-Silhouette mit Fahr-Ampel -->
+  <rect width="512" height="512" fill="#14181e"/>
+  <!-- Ampel -->
+  <rect x="166" y="78" width="180" height="64" rx="32" fill="#0b0d10" stroke="#2a313b" stroke-width="4"/>
+  <circle cx="210" cy="110" r="18" fill="#ef4b4b"/>
+  <circle cx="256" cy="110" r="18" fill="#f2c230"/>
+  <circle cx="302" cy="110" r="18" fill="#2fbf71"/>
+  <!-- Motorrad -->
+  <g stroke="#ff9a1f" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="146" cy="338" r="66" fill="none" stroke-width="24"/>
+    <circle cx="370" cy="338" r="66" fill="none" stroke-width="24"/>
+    <path d="M146 338 L236 306" fill="none" stroke-width="22"/>
+    <path d="M370 338 L330 214" fill="none" stroke-width="22"/>
+    <path d="M318 200 L348 182" fill="none" stroke-width="18"/>
+    <path d="M112 232 L176 244 L246 232 Q272 200 322 206 L336 222 L302 298 L228 310 L190 262 Z" fill="#ff9a1f" stroke-width="10"/>
+  </g>
+  <circle cx="146" cy="338" r="14" fill="#ff9a1f"/>
+  <circle cx="370" cy="338" r="14" fill="#ff9a1f"/>
+</svg>

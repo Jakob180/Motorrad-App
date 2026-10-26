@@ -1,0 +1,151 @@
+# Motorrad-Begleiter (PWA)
+
+Progressive Web App für Motorradfahrer: **Fahrwetter mit Ampel**, **Logbuch** (Tanken, Wartung,
+Statistik) und **Service-Erinnerungen**. Reines HTML/CSS/JavaScript ohne Build-Tool – läuft auf
+GitHub Pages und wird am iPhone über Safari → „Zum Home-Bildschirm" installiert.
+
+## Ausbaustufen
+
+| Schritt | Inhalt | Stand |
+|---|---|---|
+| 1 | Grundgerüst, Logbuch, Backup, Offline-Cache | ✅ fertig |
+| 2 | Wetter am Standort + Fahr-Ampel | ⏳ |
+| 3 | Wetter entlang einer Route (Karte, OSRM) | ⏳ |
+| 4 | Service-Intervalle, Pickerl, Erinnerungen, .ics-Export | ⏳ |
+| 5 | Push-Benachrichtigungen (Cloudflare Worker) | ⏳ |
+
+## Projektstruktur
+
+```
+index.html          App-Gerüst (Kopfzeile, Tabs, Tab-Leiste)
+manifest.json       PWA-Manifest (Name, Icons, Farben)
+sw.js               Service Worker – Offline-Cache, VERSION bei Updates erhöhen!
+.nojekyll           sagt GitHub Pages, die Dateien unverändert auszuliefern
+css/styles.css      dunkles, handschuhtaugliches Design
+icons/              App-Icons (SVG + PNG für iOS/Android)
+js/app.js           Einstieg: Tabs/Navigation, Service Worker, Hinweis-Banner
+js/db.js            IndexedDB (lokale Datenbank), Einstellungen, API-Cache, Backup
+js/ui.js            Formatierung (de-AT), Formularbausteine, Dialoge, Toasts
+js/logbook.js       Logbuch: Motorräder, Einträge, Verbrauch, Statistik, Diagramme
+js/settings.js      Einstellungen: Backup-Export/-Import, Speicher, Updates
+```
+
+Externe Bibliotheken werden per CDN geladen und vom Service Worker für den Offline-Betrieb
+gecacht: [Chart.js](https://www.chartjs.org/) (Diagramme), ab Schritt 3 [Leaflet](https://leafletjs.com/) (Karte).
+Für die Datenbank wird bewusst **keine** Bibliothek verwendet (kleiner eigener IndexedDB-Wrapper in
+`db.js`), damit das Logbuch garantiert auch beim ersten Offline-Start funktioniert.
+
+## Lokal testen
+
+Die App muss über einen Webserver laufen (nicht per Doppelklick auf `index.html`), weil
+ES-Module und Service Worker sonst nicht funktionieren. `localhost` gilt als sicher –
+Service Worker und Standort funktionieren dort auch ohne https.
+
+**Variante A – Python** (unter Windows meist schon installiert):
+
+```bash
+python -m http.server 8080
+```
+
+**Variante B – Node.js:**
+
+```bash
+npx serve -l 8080
+```
+
+Dann im Browser **http://localhost:8080** öffnen.
+
+Tipps für Chrome/Edge (F12 → Entwicklertools):
+
+- **Handy-Ansicht:** Symbol „Gerätesymbolleiste" (Strg+Umschalt+M) → z. B. „iPhone 14 Pro".
+- **Service Worker beim Entwickeln:** Tab *Application* → *Service Workers* → Haken bei
+  **„Update on reload"** setzen. Sonst liefert der Offline-Cache nach Code-Änderungen weiter die
+  alten Dateien aus.
+- **Offline testen:** Tab *Network* → „Offline" wählen und neu laden.
+- **Daten ansehen/löschen:** Tab *Application* → *IndexedDB* → `motorrad-begleiter`.
+
+> Am iPhone im WLAN über `http://192.168.x.x:8080` zu testen klappt nur eingeschränkt:
+> Ohne https gibt es keinen Service Worker und keinen Standort. Zum Testen am iPhone daher
+> GitHub Pages verwenden (ist kostenlos und dauert 2 Minuten).
+
+## Auf GitHub Pages veröffentlichen
+
+1. Auf [github.com](https://github.com) ein **neues, öffentliches Repository** anlegen, z. B. `motorrad-app`
+   (GitHub Pages ist für private Repos nur in bezahlten Plänen verfügbar).
+2. Im Projektordner:
+
+   ```bash
+   git init
+   git add .
+   git commit -m "Motorrad-Begleiter: Schritt 1"
+   git branch -M main
+   git remote add origin https://github.com/DEIN-NAME/motorrad-app.git
+   git push -u origin main
+   ```
+
+3. Im Repository: **Settings → Pages → Build and deployment**
+   - Source: **Deploy from a branch**
+   - Branch: **main**, Ordner **/ (root)** → **Save**
+4. Nach 1–2 Minuten ist die App erreichbar unter
+   **https://DEIN-NAME.github.io/motorrad-app/**
+
+Alle Pfade in der App sind relativ – sie funktioniert daher auch im Unterordner `/motorrad-app/`.
+
+## Am iPhone installieren
+
+1. Die GitHub-Pages-Adresse in **Safari** öffnen (nicht Chrome – nur Safari kann installieren).
+2. Unten auf **Teilen** (Quadrat mit Pfeil) tippen.
+3. **„Zum Home-Bildschirm"** wählen → **Hinzufügen**.
+4. Die App ab jetzt immer über das Icon am Home-Bildschirm starten. Sie läuft dann im Vollbild,
+   funktioniert offline und (ab Schritt 5) kann Push-Benachrichtigungen empfangen.
+
+> Achtung: Safari und die installierte App haben **getrennte Speicher**. Daten, die du in Safari
+> eingibst, siehst du in der installierten App nicht (und umgekehrt). Daher direkt die
+> installierte App verwenden – oder per Backup übertragen.
+
+## Updates veröffentlichen (wichtig!)
+
+Der Service Worker liefert die App aus dem Offline-Cache aus. Damit installierte Apps neue
+Dateien bekommen, bei **jeder** Änderung:
+
+1. In `sw.js` die Version erhöhen:
+
+   ```js
+   const VERSION = 'v2';   // vorher 'v1'
+   ```
+
+2. Neue Dateien (z. B. `js/weather.js`) in die Liste `APP_FILES` in `sw.js` eintragen.
+3. Committen und pushen:
+
+   ```bash
+   git add .
+   git commit -m "Update: Beschreibung"
+   git push
+   ```
+
+Beim nächsten Öffnen erkennt die App die neue Version und zeigt oben
+**„Neue Version verfügbar → Aktualisieren"**. In den Einstellungen gibt es zusätzlich
+**„Nach Updates suchen"**. GitHub Pages braucht nach dem Push 1–2 Minuten, und der Browser
+cacht Dateien bis zu 10 Minuten – also notfalls kurz warten.
+
+## Datensicherung
+
+Alle Daten liegen **nur lokal** auf dem Gerät (IndexedDB) – es gibt keinen Server, kein Konto.
+iOS kann Daten von Web-Apps löschen (z. B. bei Speichermangel oder wenn die App wochenlang
+nicht geöffnet wurde). Deshalb:
+
+- **Einstellungen → Backup sichern** erzeugt eine JSON-Datei mit allen Daten (inkl. Fotos).
+  Am iPhone öffnet sich das Teilen-Menü → **„In Dateien sichern"** → z. B. iCloud Drive.
+- **Backup importieren** ersetzt alle Daten auf dem Gerät durch die Datei – so kommst du
+  auch auf ein neues Handy.
+- Hat das Logbuch Einträge und das letzte Backup ist älter als 30 Tage, erinnert die App oben
+  mit einem Banner daran.
+
+## Fehlerbehebung
+
+| Problem | Lösung |
+|---|---|
+| Änderungen am Code erscheinen nicht | `VERSION` in `sw.js` erhöhen bzw. in den Entwicklertools „Update on reload" aktivieren |
+| Leere Seite / Fehler in der Konsole | Läuft die App über einen Webserver (`http://localhost…`) und nicht als `file://`? |
+| Diagramme fehlen | Beim allerersten Start ist Internet nötig, damit Chart.js in den Cache kommt |
+| Daten am iPhone weg | Backup importieren (Einstellungen → Backup importieren) |

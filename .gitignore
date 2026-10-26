@@ -1,0 +1,6 @@
+# Lokale Werkzeug-Einstellungen (nicht veröffentlichen)
+.claude/
+
+# Betriebssystem
+Thumbs.db
+.DS_Store
