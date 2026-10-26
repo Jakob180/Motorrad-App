@@ -38,7 +38,12 @@ export const DEFAULT_SETTINGS = {
     tempRed: 3,           // unter diesem Wert (°C) → Rot (Glättegefahr)
     gustYellow: 50,       // Böen in km/h
     gustRed: 70,
+    rideFrom: 8,          // Fahrzeit für das Tagesfazit: von … Uhr
+    rideTo: 20,           // … bis Uhr
   },
+  weatherLocation: { mode: 'gps' }, // Wetter-Tab: 'gps' oder { mode: 'place', name, lat, lon }
+  home: null,             // Wohnort { name, lat, lon } – Fallback ohne GPS, später für Push
+  recentPlaces: [],       // zuletzt gesuchte Orte
   avgSpeed: 60,           // Durchschnittsgeschwindigkeit für Routen (km/h)
   lastBackup: null,       // ISO-Zeitstempel des letzten Exports
 };

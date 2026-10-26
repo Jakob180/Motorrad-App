@@ -9,7 +9,7 @@ GitHub Pages und wird am iPhone über Safari → „Zum Home-Bildschirm" install
 | Schritt | Inhalt | Stand |
 |---|---|---|
 | 1 | Grundgerüst, Logbuch, Backup, Offline-Cache | ✅ fertig |
-| 2 | Wetter am Standort + Fahr-Ampel | ⏳ |
+| 2 | Wetter am Standort + Fahr-Ampel | ✅ fertig |
 | 3 | Wetter entlang einer Route (Karte, OSRM) | ⏳ |
 | 4 | Service-Intervalle, Pickerl, Erinnerungen, .ics-Export | ⏳ |
 | 5 | Push-Benachrichtigungen (Cloudflare Worker) | ⏳ |
@@ -26,14 +26,47 @@ icons/              App-Icons (SVG + PNG für iOS/Android)
 js/app.js           Einstieg: Tabs/Navigation, Service Worker, Hinweis-Banner
 js/db.js            IndexedDB (lokale Datenbank), Einstellungen, API-Cache, Backup
 js/ui.js            Formatierung (de-AT), Formularbausteine, Dialoge, Toasts
+js/weather.js       Wetter-Tab: Standort, Vorhersage (Open-Meteo), Ortssuche
+js/ampel.js         Fahr-Ampel: Bewertung pro Stunde + Tagesfazit (ohne DOM, auch für den Push-Server)
 js/logbook.js       Logbuch: Motorräder, Einträge, Verbrauch, Statistik, Diagramme
-js/settings.js      Einstellungen: Backup-Export/-Import, Speicher, Updates
+js/settings.js      Einstellungen: Ampel-Grenzwerte, Wohnort, Backup, Speicher, Updates
 ```
 
 Externe Bibliotheken werden per CDN geladen und vom Service Worker für den Offline-Betrieb
 gecacht: [Chart.js](https://www.chartjs.org/) (Diagramme), ab Schritt 3 [Leaflet](https://leafletjs.com/) (Karte).
 Für die Datenbank wird bewusst **keine** Bibliothek verwendet (kleiner eigener IndexedDB-Wrapper in
 `db.js`), damit das Logbuch garantiert auch beim ersten Offline-Start funktioniert.
+
+## Wetter & Fahr-Ampel
+
+- **Datenquelle:** [Open-Meteo](https://open-meteo.com/) (kostenlos, ohne API-Key) – Forecast-API für
+  heute + 3 Tage, Geocoding-API für die Ortssuche. Ortsnamen zum GPS-Standort kommen von
+  OpenStreetMap (Nominatim). Antworten werden 30 Minuten zwischengespeichert, Ortsnamen 30 Tage.
+- **Standort:** GPS, ein gesuchter Ort oder der **Wohnort** (Einstellungen). Klappt GPS nicht,
+  zeigt die App den Wohnort bzw. den letzten bekannten Standort. Eine GPS-Position wird
+  15 Minuten wiederverwendet, damit das iPhone nicht ständig nachfragt.
+- **Ohne Internet** werden die zuletzt geladenen Daten mit Uhrzeit („Stand 14:05") angezeigt.
+
+**So bewertet die Ampel jede Stunde** (Grenzwerte in den Einstellungen änderbar):
+
+| | Gelb | Rot |
+|---|---|---|
+| Regenwahrscheinlichkeit | über 40 % | über 70 % |
+| Regenmenge | über 0,5 mm/h | über 2 mm/h |
+| Regen gesamt | – | Wahrscheinlichkeit **und** Menge über Gelb |
+| Temperatur | unter 8 °C | unter 3 °C (Glättegefahr) |
+| Böen | über 50 km/h | über 70 km/h |
+| Sonstiges | Nebel, nasse Straße (≥ 1 mm Regen in den 2 Stunden davor) | Gewitter, Schnee, gefrierender Regen |
+
+**Tagesfazit:** Bewertet wird die Fahrzeit (Standard 8–20 Uhr, einstellbar). Grün, wenn mindestens
+3 Stunden am Stück grün sind; Gelb, wenn 3 Stunden am Stück höchstens gelb sind; sonst Rot.
+Dazu ein kurzer Satz wie *„Bis 10 Uhr zu kalt, ideal von 10–16 Uhr, ab 16 Uhr Regen"*.
+
+Die Logik steckt in `js/ampel.js` und kann ohne Browser getestet werden:
+
+```bash
+node --input-type=module -e "import { rateHour } from './js/ampel.js'; console.log(rateHour({ temp: 6, rainProb: 50, rain: 0.2, gust: 30, code: 3 }, { rainProbYellow: 40, rainProbRed: 70, rainMmYellow: 0.5, rainMmRed: 2, tempYellow: 8, tempRed: 3, gustYellow: 50, gustRed: 70 }))"
+```
 
 ## Lokal testen
 
@@ -148,4 +181,5 @@ nicht geöffnet wurde). Deshalb:
 | Änderungen am Code erscheinen nicht | `VERSION` in `sw.js` erhöhen bzw. in den Entwicklertools „Update on reload" aktivieren |
 | Leere Seite / Fehler in der Konsole | Läuft die App über einen Webserver (`http://localhost…`) und nicht als `file://`? |
 | Diagramme fehlen | Beim allerersten Start ist Internet nötig, damit Chart.js in den Cache kommt |
+| „Standortzugriff nicht erlaubt" | iPhone: Einstellungen → Datenschutz & Sicherheit → Ortungsdienste → Safari-Websites → „Beim Verwenden der App". Oder einen Wohnort festlegen. |
 | Daten am iPhone weg | Backup importieren (Einstellungen → Backup importieren) |

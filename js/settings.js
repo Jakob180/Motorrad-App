@@ -1,11 +1,12 @@
-// settings.js – Einstellungen-Tab: Datensicherung (Backup), Speicher und App-Infos.
-// Spätere Ausbaustufen ergänzen hier Ampel-Grenzwerte, Routen und Benachrichtigungen.
+// settings.js – Einstellungen-Tab: Fahr-Ampel-Grenzwerte, Wohnort, Datensicherung (Backup),
+// Speicher und App-Infos. Spätere Ausbaustufen ergänzen Routen und Benachrichtigungen.
 
 import * as db from './db.js';
 import {
   esc, fmtDate, fmtNum, fmtInDays, daysBetween, todayISO, toast, confirmDialog,
-  downloadFile, canShareFiles, isStandalone, ICONS,
+  downloadFile, canShareFiles, isStandalone, ICONS, field, parseDecimal, setFieldError, clearFieldErrors,
 } from './ui.js';
+import { openPlaceSearch, currentPlace } from './weather.js';
 
 let root = null;
 let backupFile = null; // vorbereitete Backup-Datei – iOS verlangt share() direkt beim Tippen
@@ -14,6 +15,60 @@ export function init(el) {
   root = el;
   root.addEventListener('click', onClick);
   root.addEventListener('change', onChange);
+  root.addEventListener('submit', onSubmit);
+}
+
+/** Auswahlliste für ganze Zahlen von..bis (Temperaturen, Uhrzeiten – auch mit Minus bedienbar) */
+function rangeOptions(from, to, unit, current) {
+  const values = [];
+  for (let v = from; v <= to; v++) values.push(v);
+  if (Number.isFinite(current) && !values.includes(current)) values.push(current);
+  return values.sort((a, b) => a - b).map((v) => [v, `${v}${unit}`]);
+}
+
+/** Formular für die Ampel-Grenzwerte */
+function ampelCard(t) {
+  const num = (label, name, decimals = 0) => field({
+    label, name, inputmode: decimals ? 'decimal' : 'numeric', value: fmtNum(t[name], decimals),
+  });
+  const sel = (label, name, from, to, unit) => field({
+    label, name, type: 'select', value: t[name], options: rangeOptions(from, to, unit, t[name]),
+  });
+  return `<div class="card">
+    <h3>🚦 Fahr-Ampel</h3>
+    <p class="muted small">Ab welchen Werten eine Stunde gelb oder rot wird. Regen ist auch rot, wenn
+      Wahrscheinlichkeit <em>und</em> Menge über Gelb liegen. Gewitter und Schnee sind immer rot,
+      Nebel und nasse Straße nach Regen gelb.</p>
+    <form id="ampel-form" novalidate>
+      <div class="form-sub">Regenwahrscheinlichkeit (%)</div>
+      <div class="grid2">${num('Gelb über', 'rainProbYellow')}${num('Rot über', 'rainProbRed')}</div>
+      <div class="form-sub">Regenmenge (mm pro Stunde)</div>
+      <div class="grid2">${num('Gelb über', 'rainMmYellow', 1)}${num('Rot über', 'rainMmRed', 1)}</div>
+      <div class="form-sub">Temperatur</div>
+      <div class="grid2">${sel('Gelb unter', 'tempYellow', -5, 20, ' °C')}${sel('Rot unter (Glätte)', 'tempRed', -10, 15, ' °C')}</div>
+      <div class="form-sub">Windböen (km/h)</div>
+      <div class="grid2">${num('Gelb über', 'gustYellow')}${num('Rot über', 'gustRed')}</div>
+      <div class="form-sub">Fahrzeit für das Tagesfazit</div>
+      <div class="grid2">${sel('Von', 'rideFrom', 0, 23, ':00')}${sel('Bis', 'rideTo', 1, 24, ':00')}</div>
+      <div class="row">
+        <button type="submit" class="btn btn-primary">${ICONS.check} Speichern</button>
+        <button type="button" class="btn" data-action="reset-ampel">Standardwerte</button>
+      </div>
+    </form>
+  </div>`;
+}
+
+function homeCard(home) {
+  return `<div class="card">
+    <h3>🏠 Wohnort</h3>
+    <p class="muted small">Wird im Wetter-Tab angezeigt, wenn GPS nicht verfügbar ist
+      (später auch für die morgendliche Push-Nachricht).</p>
+    <div class="kv"><span class="k">Wohnort</span><span class="v">${home ? esc(home.name) : 'nicht festgelegt'}</span></div>
+    <div class="row mt">
+      <button type="button" class="btn btn-sm" data-action="set-home">${home ? 'Ändern' : 'Festlegen'}</button>
+      ${home ? '<button type="button" class="btn btn-sm btn-ghost" data-action="clear-home">Entfernen</button>' : ''}
+    </div>
+  </div>`;
 }
 
 export async function show() {
@@ -31,6 +86,8 @@ async function render() {
   const share = canShareFiles();
 
   root.innerHTML = `
+    ${ampelCard(settings.thresholds)}
+    ${homeCard(settings.home)}
     <div class="card">
       <h3>💾 Datensicherung</h3>
       <p class="muted">iOS kann die Daten von Web-Apps löschen, z. B. wenn die App länger nicht geöffnet wurde
@@ -107,6 +164,31 @@ async function onClick(e) {
     case 'update':
       await checkForUpdate();
       break;
+    case 'reset-ampel':
+      await db.saveSettings({ thresholds: structuredClone(db.DEFAULT_SETTINGS.thresholds) });
+      toast('Standardwerte wiederhergestellt', 'ok');
+      await render();
+      break;
+    case 'set-home':
+      openPlaceSearch({
+        title: 'Wohnort wählen',
+        showHome: false,
+        onPick: async (place) => {
+          try {
+            const p = place.gps ? await currentPlace() : place;
+            await db.saveSettings({ home: { name: p.name, lat: p.lat, lon: p.lon } });
+            toast(`Wohnort: ${p.name}`, 'ok');
+            await render();
+          } catch (err) {
+            toast(err.message, 'error', 6000);
+          }
+        },
+      });
+      break;
+    case 'clear-home':
+      await db.saveSettings({ home: null });
+      await render();
+      break;
     case 'wipe':
       if (!await confirmDialog('Alle Motorräder, Einträge und Einstellungen auf diesem Gerät löschen?', { ok: 'Weiter', danger: true })) return;
       if (!await confirmDialog('Wirklich? Das kann nicht rückgängig gemacht werden – außer du hast ein Backup.', { title: 'Letzte Warnung', ok: 'Alles löschen', danger: true })) return;
@@ -117,6 +199,34 @@ async function onClick(e) {
       break;
     default:
   }
+}
+
+/** Ampel-Grenzwerte prüfen und speichern */
+async function onSubmit(e) {
+  if (e.target.id !== 'ampel-form') return;
+  e.preventDefault();
+  const form = e.target;
+  clearFieldErrors(form);
+  const names = ['rainProbYellow', 'rainProbRed', 'rainMmYellow', 'rainMmRed', 'tempYellow', 'tempRed',
+    'gustYellow', 'gustRed', 'rideFrom', 'rideTo'];
+  const v = {};
+  let ok = true;
+  const fail = (name, msg) => { setFieldError(form, name, msg); ok = false; };
+  for (const name of names) {
+    v[name] = parseDecimal(form.elements[name].value);
+    if (!Number.isFinite(v[name])) fail(name, 'Bitte eine Zahl eingeben.');
+  }
+  if (!ok) return;
+  if (v.rainProbYellow < 0 || v.rainProbYellow > 100) fail('rainProbYellow', 'Zwischen 0 und 100 %.');
+  if (v.rainProbRed < 0 || v.rainProbRed > 100) fail('rainProbRed', 'Zwischen 0 und 100 %.');
+  if (v.rainProbRed <= v.rainProbYellow) fail('rainProbRed', 'Muss größer als Gelb sein.');
+  if (v.rainMmRed <= v.rainMmYellow) fail('rainMmRed', 'Muss größer als Gelb sein.');
+  if (v.gustRed <= v.gustYellow) fail('gustRed', 'Muss größer als Gelb sein.');
+  if (v.tempRed >= v.tempYellow) fail('tempRed', 'Muss kälter als Gelb sein.');
+  if (v.rideTo <= v.rideFrom) fail('rideTo', 'Muss nach „Von" liegen.');
+  if (!ok) return;
+  await db.saveSettings({ thresholds: v });
+  toast('Grenzwerte gespeichert', 'ok');
 }
 
 async function onChange(e) {

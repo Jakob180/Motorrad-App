@@ -5,8 +5,8 @@ import * as db from './db.js';
 import { $, $$, esc, setBanner, toast, daysBetween, toISODate, ICONS } from './ui.js';
 import { getActiveBike, getBikes, openBikePicker } from './logbook.js';
 
-// Start-Tab (wird mit Schritt 2 auf 'wetter' umgestellt)
-const DEFAULT_TAB = 'logbuch';
+// Start-Tab beim Öffnen der App
+const DEFAULT_TAB = 'wetter';
 
 /** Platzhalter für Bereiche, die in späteren Schritten gebaut werden */
 const placeholder = (icon, title, text) => ({
@@ -18,7 +18,7 @@ const placeholder = (icon, title, text) => ({
 
 // Tabs: Titel, Modul (wird erst beim ersten Öffnen geladen), Motorrad-Auswahl in der Kopfzeile?
 const TABS = {
-  wetter: { title: 'Wetter', load: async () => placeholder('🌦️', 'Wetter & Fahr-Ampel', 'Kommt in Schritt 2.') },
+  wetter: { title: 'Kann ich fahren?', load: () => import('./weather.js') },
   logbuch: { title: 'Logbuch', load: () => import('./logbook.js'), bikeChip: true },
   service: { title: 'Service', load: async () => placeholder('🔧', 'Service & Erinnerungen', 'Kommt in Schritt 4.'), bikeChip: true },
   einstellungen: { title: 'Einstellungen', load: () => import('./settings.js') },
