@@ -4,7 +4,7 @@
 
 import * as db from './db.js';
 import {
-  $, esc, fmtNum, fmtKm, fmtEuro, fmtDate, fmtDateShort, fmtMonthYear, MONTHS_SHORT,
+  esc, fmtNum, fmtEuro, fmtDate, fmtDateShort, fmtMonthYear, MONTHS_SHORT,
   parseDecimal, parseInteger, todayISO, field, switchRow, segInput, setFieldError, clearFieldErrors,
   openSheet, confirmDialog, toast, loadScript, imageToDataURL, ICONS,
 } from './ui.js';
@@ -25,6 +25,51 @@ export const ENTRY_TYPES = {
 
 export const POSITIONS = { front: 'Vorne', rear: 'Hinten', both: 'Beide' };
 export const CHAIN_ACTIONS = { clean: 'Reinigen', lube: 'Schmieren', replace: 'Wechseln' };
+
+// Zähler pro Motorrad: Kilometer oder Betriebsstunden (Enduros werden nach Bh gewartet).
+// Das Feld "odometer" eines Eintrags enthält den Stand in der Einheit seines Motorrads.
+export const METERS = {
+  km: {
+    label: 'Kilometer',
+    short: 'km',
+    reading: 'Kilometerstand',
+    usage: 'Gefahren',
+    usagePer: 'Gefahrene km pro',
+    decimals: 0,
+    consumption: 'l/100 km',  // Verbrauch = Liter / km × 100
+    perFactor: 100,
+    costPer: '€/100 km',
+    tankLabel: 'Reichweite mit vollem Tank (ca.)',
+  },
+  h: {
+    label: 'Betriebsstunden',
+    short: 'Bh',
+    reading: 'Betriebsstunden',
+    usage: 'Betriebsstunden',
+    usagePer: 'Betriebsstunden pro',
+    decimals: 1,
+    consumption: 'l/h',       // Verbrauch = Liter / Stunden
+    perFactor: 1,
+    costPer: '€/h',
+    tankLabel: 'Laufzeit mit vollem Tank (ca.)',
+  },
+};
+
+/** Zähler-Einheit eines Motorrads (Standard: Kilometer) */
+export function meterOf(bike) {
+  return METERS[bike?.meter] || METERS.km;
+}
+
+/** Zählerstand oder -differenz formatieren → "12.345 km" bzw. "123,4 Bh" */
+export function fmtMeter(value, bike) {
+  const m = meterOf(bike);
+  return Number.isFinite(value) ? `${fmtNum(value, m.decimals)} ${m.short}` : '–';
+}
+
+/** Eingabe eines Zählerstands lesen (km ganzzahlig, Bh mit Kommastelle) */
+export function parseMeter(input, bike) {
+  return meterOf(bike).decimals ? parseDecimal(input) : parseInteger(input);
+}
 
 const SUBVIEWS = { verlauf: 'Verlauf', verbrauch: 'Verbrauch', statistik: 'Statistik', garage: 'Garage' };
 
@@ -72,14 +117,15 @@ export async function getEntries(bikeId) {
 /**
  * Verbrauchsauswertung. Der Verbrauch ist nur zwischen zwei VOLLtankungen korrekt:
  * Liter aller Tankstopps nach der vorigen Volltankung (inkl. Teilbetankungen)
- * geteilt durch die seither gefahrenen Kilometer.
+ * geteilt durch die seither gefahrenen Kilometer (→ l/100 km) bzw. Betriebsstunden (→ l/h).
  */
-export function calcFuel(entries) {
+export function calcFuel(entries, bike) {
+  const factor = meterOf(bike).perFactor;
   const fuel = entries
     .filter((e) => e.type === 'fuel' && e.liters > 0 && Number.isFinite(e.odometer))
     .sort((a, b) => a.odometer - b.odometer || a.date.localeCompare(b.date));
 
-  const perEntry = new Map(); // Eintrags-ID → Verbrauch l/100 km
+  const perEntry = new Map(); // Eintrags-ID → Verbrauch (l/100 km bzw. l/h)
   const segments = [];        // abgeschlossene Abschnitte zwischen zwei Volltankungen
   let lastFull = null;
   let liters = 0;
@@ -92,10 +138,10 @@ export function calcFuel(entries) {
     }
     if (e.full) {
       if (lastFull && e.odometer > lastFull.odometer) {
-        const km = e.odometer - lastFull.odometer;
-        const consumption = (liters / km) * 100;
+        const usage = e.odometer - lastFull.odometer; // km bzw. Bh
+        const consumption = (liters / usage) * factor;
         perEntry.set(e.id, consumption);
-        segments.push({ date: e.date, km, liters, cost, consumption });
+        segments.push({ date: e.date, usage, liters, cost, consumption });
       }
       lastFull = e;
       liters = 0;
@@ -106,7 +152,7 @@ export function calcFuel(entries) {
   const sum = (arr, fn) => arr.reduce((s, x) => s + fn(x), 0);
   const allFuel = entries.filter((e) => e.type === 'fuel' && e.liters > 0);
   const priced = allFuel.filter((e) => e.cost > 0);
-  const segKm = sum(segments, (s) => s.km);
+  const segUsage = sum(segments, (s) => s.usage);
 
   return {
     count: allFuel.length,
@@ -114,14 +160,14 @@ export function calcFuel(entries) {
     segments,
     totalLiters: sum(allFuel, (e) => e.liters),
     totalCost: sum(allFuel, (e) => e.cost || 0),
-    avgConsumption: segKm ? (sum(segments, (s) => s.liters) / segKm) * 100 : null,
+    avgConsumption: segUsage ? (sum(segments, (s) => s.liters) / segUsage) * factor : null,
     lastConsumption: segments.length ? segments[segments.length - 1].consumption : null,
     avgPricePerLiter: priced.length ? sum(priced, (e) => e.cost) / sum(priced, (e) => e.liters) : null,
-    fuelCostPerKm: segKm ? sum(segments, (s) => s.cost) / segKm : null,
+    fuelCostPerUnit: segUsage ? sum(segments, (s) => s.cost) / segUsage : null, // € pro km bzw. Bh
   };
 }
 
-/** Alle bekannten Kilometerstände (Datum + km), chronologisch */
+/** Alle bekannten Zählerstände (Datum + km bzw. Bh), chronologisch */
 export function odometerReadings(entries, bike) {
   const readings = entries
     .filter((e) => Number.isFinite(e.odometer))
@@ -132,17 +178,17 @@ export function odometerReadings(entries, bike) {
   return readings.sort((a, b) => a.date.localeCompare(b.date) || a.odo - b.odo);
 }
 
-/** Aktueller (höchster bekannter) Kilometerstand */
+/** Aktueller (höchster bekannter) Zählerstand */
 export function currentOdometer(entries, bike) {
   const readings = odometerReadings(entries, bike);
   return readings.length ? Math.max(...readings.map((r) => r.odo)) : null;
 }
 
 /**
- * Gefahrene km in einem Zeitraum [start, end] (ISO-Daten, inklusive).
+ * Gefahrene km bzw. gelaufene Bh in einem Zeitraum [start, end] (ISO-Daten, inklusive).
  * Ausgangspunkt ist der letzte Stand VOR dem Zeitraum, sonst der erste darin.
  */
-export function kmInRange(readings, start, end) {
+export function usageInRange(readings, start, end) {
   let before = null;
   let first = null;
   let max = null;
@@ -232,7 +278,7 @@ async function render() {
   const entries = bike ? await getEntries(bike.id) : [];
   if (seq !== renderSeq) return;
   destroyCharts();
-  ctx = { bikes, bike, entries, fuel: calcFuel(entries) };
+  ctx = { bikes, bike, entries, fuel: calcFuel(entries, bike) };
 
   const nav = `<nav class="subnav" aria-label="Logbuch-Bereiche">${Object.entries(SUBVIEWS).map(([key, label]) =>
     `<a href="#logbuch/${key}" class="${state.sub === key ? 'active' : ''}" ${state.sub === key ? 'aria-current="page"' : ''}>${label}</a>`).join('')}</nav>`;
@@ -293,8 +339,8 @@ function renderVerlauf() {
       html += `<div class="list-head">${fmtMonthYear(`${m}-01`)}</div>`;
     }
     const sub = [fmtDate(e.date)];
-    if (Number.isFinite(e.odometer)) sub.push(fmtKm(e.odometer));
-    if (fuel.perEntry.has(e.id)) sub.push(`${fmtNum(fuel.perEntry.get(e.id), 1)} l/100 km`);
+    if (Number.isFinite(e.odometer)) sub.push(fmtMeter(e.odometer, ctx.bike));
+    if (fuel.perEntry.has(e.id)) sub.push(`${fmtNum(fuel.perEntry.get(e.id), 1)} ${meterOf(ctx.bike).consumption}`);
     const pricePerLiter = e.type === 'fuel' && e.cost > 0 && e.liters > 0
       ? `<small>${fmtNum(e.cost / e.liters, 3)} €/l</small>` : '';
     html += `<button type="button" class="item" data-action="edit-entry" data-id="${esc(e.id)}">
@@ -310,34 +356,36 @@ function renderVerlauf() {
 
 function renderVerbrauch(chartDefs) {
   const { bike, fuel, entries } = ctx;
+  const m = meterOf(bike);
   if (!fuel.count) {
     return `<div class="empty">
       <div class="e">⛽</div>
       <h3>Noch keine Tankstopps</h3>
-      <p>Trage beim Tanken Kilometerstand, Liter und Preis ein – die App rechnet Verbrauch und Kosten aus.</p>
+      <p>Trage beim Tanken ${m.reading}, Liter und Preis ein – die App rechnet Verbrauch und Kosten aus.</p>
       <button type="button" class="btn btn-primary" data-action="new-entry" data-type="fuel">${ICONS.plus} Tankstopp eintragen</button>
     </div>`;
   }
 
-  const range = bike?.tankVolume && fuel.avgConsumption ? (bike.tankVolume / fuel.avgConsumption) * 100 : null;
+  // Reichweite (km) bzw. Laufzeit (Bh) mit einer Tankfüllung
+  const range = bike?.tankVolume && fuel.avgConsumption ? (bike.tankVolume / fuel.avgConsumption) * m.perFactor : null;
   const kpi = (label, value, unit = '', wide = false) =>
     `<div class="kpi ${wide ? 'wide' : ''}"><div class="l">${label}</div><div class="v">${value}<span class="u">${unit}</span></div></div>`;
 
   let html = `<div class="kpis">
-    ${kpi('Ø Verbrauch', fmtNum(fuel.avgConsumption, 1), 'l/100 km')}
-    ${kpi('Zuletzt', fmtNum(fuel.lastConsumption, 1), 'l/100 km')}
+    ${kpi('Ø Verbrauch', fmtNum(fuel.avgConsumption, 1), m.consumption)}
+    ${kpi('Zuletzt', fmtNum(fuel.lastConsumption, 1), m.consumption)}
     ${kpi('Ø Preis', fmtNum(fuel.avgPricePerLiter, 3), '€/l')}
-    ${kpi('Spritkosten', fmtNum(fuel.fuelCostPerKm != null ? fuel.fuelCostPerKm * 100 : null, 2), '€/100 km')}
+    ${kpi('Spritkosten', fmtNum(fuel.fuelCostPerUnit != null ? fuel.fuelCostPerUnit * m.perFactor : null, 2), m.costPer)}
     ${kpi('Getankt gesamt', fmtNum(fuel.totalLiters, 1), 'l')}
     ${kpi('Tankstopps', fmtNum(fuel.count), `· ${fmtEuro(fuel.totalCost)}`)}
-    ${range ? kpi('Reichweite mit vollem Tank (ca.)', fmtNum(range, 0), 'km', true) : ''}
+    ${range ? kpi(m.tankLabel, fmtNum(range, m.decimals), m.short, true) : ''}
   </div>`;
 
   if (!fuel.segments.length) {
     html += `<div class="card"><p class="muted">Für den Verbrauch braucht es mindestens <strong>zwei Volltankungen</strong>.
       Teilbetankungen dazwischen werden automatisch mitgerechnet.</p></div>`;
   } else {
-    html += `<div class="card"><h3>Verbrauch (l/100 km)</h3><div class="chart-box"><canvas id="chart-consumption"></canvas></div></div>`;
+    html += `<div class="card"><h3>Verbrauch (${m.consumption})</h3><div class="chart-box"><canvas id="chart-consumption"></canvas></div></div>`;
     const segs = fuel.segments;
     chartDefs.push({
       id: 'chart-consumption',
@@ -346,7 +394,7 @@ function renderVerbrauch(chartDefs) {
         data: {
           labels: segs.map((s) => fmtDateShort(s.date) + s.date.slice(2, 4)),
           datasets: [{
-            label: 'l/100 km',
+            label: m.consumption,
             data: segs.map((s) => Math.round(s.consumption * 100) / 100),
             borderColor: '#ff9a1f',
             backgroundColor: 'rgba(255,154,31,0.15)',
@@ -358,7 +406,7 @@ function renderVerbrauch(chartDefs) {
         options: {
           plugins: {
             legend: { display: false },
-            tooltip: { callbacks: { label: (c) => `${fmtNum(c.parsed.y, 1)} l/100 km` } },
+            tooltip: { callbacks: { label: (c) => `${fmtNum(c.parsed.y, 1)} ${m.consumption}` } },
           },
           scales: { y: { ticks: { callback: (v) => fmtNum(v, 1) } } },
         },
@@ -402,9 +450,10 @@ function renderVerbrauch(chartDefs) {
 
 function renderStatistik(chartDefs) {
   const { bike, entries } = ctx;
+  const unit = meterOf(bike);
   if (!entries.length) {
     return `<div class="empty"><div class="e">📊</div><h3>Noch keine Daten</h3>
-      <p>Sobald du Einträge mit Kilometerstand hast, siehst du hier gefahrene Kilometer und Kosten.</p></div>`;
+      <p>Sobald du Einträge mit ${unit.reading} hast, siehst du hier ${unit === METERS.h ? 'Betriebsstunden' : 'gefahrene Kilometer'} und Kosten.</p></div>`;
   }
 
   const readings = odometerReadings(entries, bike);
@@ -421,44 +470,46 @@ function renderStatistik(chartDefs) {
   </div>`;
 
   const inPeriod = all ? entries : entries.filter((e) => e.date.startsWith(state.year));
-  const km = all
+  // Gefahrene km bzw. gelaufene Betriebsstunden im Zeitraum
+  const usage = all
     ? (readings.length ? readings[readings.length - 1].odo - readings[0].odo : 0)
-    : kmInRange(readings, `${state.year}-01-01`, `${state.year}-12-31`);
+    : usageInRange(readings, `${state.year}-01-01`, `${state.year}-12-31`);
   const totalCost = inPeriod.reduce((s, e) => s + (e.cost || 0), 0);
   const fuelCost = inPeriod.filter((e) => e.type === 'fuel').reduce((s, e) => s + (e.cost || 0), 0);
 
-  const kpi = (label, value, unit = '') =>
-    `<div class="kpi"><div class="l">${label}</div><div class="v">${value}<span class="u">${unit}</span></div></div>`;
+  const kpi = (label, value, suffix = '') =>
+    `<div class="kpi"><div class="l">${label}</div><div class="v">${value}<span class="u">${suffix}</span></div></div>`;
   let html = chips + `<div class="kpis">
-    ${kpi('Gefahren', fmtNum(km), 'km')}
+    ${kpi(unit.usage, fmtNum(usage, unit.decimals), unit.short)}
     ${kpi('Gesamtkosten', fmtEuro(totalCost))}
-    ${kpi('Kosten pro km', km ? fmtNum(totalCost / km, 2) : '–', '€')}
+    ${kpi(`Kosten pro ${unit.short}`, usage ? fmtNum(totalCost / usage, 2) : '–', '€')}
     ${kpi('davon Sprit', fmtEuro(fuelCost))}
   </div>`;
 
-  // Kilometer pro Monat (Jahr) bzw. pro Jahr (Gesamt)
+  // km bzw. Bh pro Monat (Jahr) oder pro Jahr (Gesamt)
+  const round = (v) => Math.round(v * 10 ** unit.decimals) / 10 ** unit.decimals;
   let labels;
   let values;
   if (all) {
     const ys = [...years].reverse();
     labels = ys;
-    values = ys.map((y) => kmInRange(readings, `${y}-01-01`, `${y}-12-31`));
+    values = ys.map((y) => round(usageInRange(readings, `${y}-01-01`, `${y}-12-31`)));
   } else {
     labels = MONTHS_SHORT;
     values = MONTHS_SHORT.map((_, i) => {
-      const m = String(i + 1).padStart(2, '0');
-      return kmInRange(readings, `${state.year}-${m}-01`, `${state.year}-${m}-31`);
+      const mm = String(i + 1).padStart(2, '0');
+      return round(usageInRange(readings, `${state.year}-${mm}-01`, `${state.year}-${mm}-31`));
     });
   }
-  html += `<div class="card"><h3>Gefahrene km pro ${all ? 'Jahr' : 'Monat'}</h3>
-    <div class="chart-box"><canvas id="chart-km"></canvas></div></div>`;
+  html += `<div class="card"><h3>${unit.usagePer} ${all ? 'Jahr' : 'Monat'}</h3>
+    <div class="chart-box"><canvas id="chart-usage"></canvas></div></div>`;
   chartDefs.push({
-    id: 'chart-km',
+    id: 'chart-usage',
     config: {
       type: 'bar',
-      data: { labels, datasets: [{ label: 'km', data: values, backgroundColor: '#2fbf71', borderRadius: 6 }] },
+      data: { labels, datasets: [{ label: unit.short, data: values, backgroundColor: '#2fbf71', borderRadius: 6 }] },
       options: {
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => fmtKm(c.parsed.y) } } },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => fmtMeter(c.parsed.y, bike) } } },
         scales: { y: { beginAtZero: true, ticks: { callback: (v) => fmtNum(v) } } },
       },
     },
@@ -487,16 +538,17 @@ function renderStatistik(chartDefs) {
   // Jahresübersicht
   if (all) {
     html += `<div class="card"><h3>Jahresübersicht</h3><table class="tbl">
-      <thead><tr><th>Jahr</th><th>km</th><th>Kosten</th><th>€/km</th></tr></thead><tbody>
+      <thead><tr><th>Jahr</th><th>${unit.short}</th><th>Kosten</th><th>€/${unit.short}</th></tr></thead><tbody>
       ${years.map((y) => {
-        const k = kmInRange(readings, `${y}-01-01`, `${y}-12-31`);
+        const u = usageInRange(readings, `${y}-01-01`, `${y}-12-31`);
         const c = entries.filter((e) => e.date.startsWith(y)).reduce((s, e) => s + (e.cost || 0), 0);
-        return `<tr><td>${y}</td><td>${fmtNum(k)}</td><td>${fmtEuro(c)}</td><td>${k ? fmtNum(c / k, 2) : '–'}</td></tr>`;
+        return `<tr><td>${y}</td><td>${fmtNum(u, unit.decimals)}</td><td>${fmtEuro(c)}</td><td>${u ? fmtNum(c / u, 2) : '–'}</td></tr>`;
       }).join('')}
       </tbody></table></div>`;
   }
 
-  html += `<p class="muted small">Die gefahrenen Kilometer werden aus den Kilometerständen aller Einträge berechnet.</p>`;
+  html += `<p class="muted small">${unit === METERS.h ? 'Die Betriebsstunden' : 'Die gefahrenen Kilometer'} werden aus den
+    Zählerständen (${unit.reading}) aller Einträge berechnet.</p>`;
   return html;
 }
 
@@ -512,7 +564,8 @@ function renderGarage() {
         <div class="photo" ${b.photo ? `style="background-image:url('${b.photo}')"` : ''}>${b.photo ? '' : '🏍️'}</div>
         <div>
           <div class="name">${esc(b.name)} ${isActive ? '<span class="badge">Aktiv</span>' : ''}</div>
-          <div class="meta">${esc(meta)}${b.year ? ` · Bj. ${esc(b.year)}` : ''}${b.tankVolume ? ` · ${fmtNum(b.tankVolume, 1)} l Tank` : ''}</div>
+          <div class="meta">${esc(meta)}${b.year ? ` · Bj. ${esc(b.year)}` : ''}${b.tankVolume ? ` · ${fmtNum(b.tankVolume, 1)} l Tank` : ''}
+            · Zähler: ${meterOf(b).label}</div>
           ${b.plate ? `<div class="plate"><span>${esc(b.plate)}</span></div>` : ''}
         </div>
       </div>
@@ -638,6 +691,7 @@ export async function openEntryForm(type, entry = null, preset = {}) {
   const t = ENTRY_TYPES[type] || ENTRY_TYPES.other;
   const lastOdo = currentOdometer(entries.filter((x) => x.id !== e.id), bike);
   const dec = (v, d = 2) => (Number.isFinite(v) ? fmtNum(v, d) : '');
+  const unit = meterOf(bike);
 
   let specific = '';
   if (type === 'fuel') {
@@ -665,9 +719,10 @@ export async function openEntryForm(type, entry = null, preset = {}) {
     <div class="grid2">
       ${field({ label: 'Datum', name: 'date', type: 'date', value: e.date, required: true })}
       ${field({
-        label: 'Kilometerstand', name: 'odometer', inputmode: 'numeric', value: Number.isFinite(e.odometer) ? fmtNum(e.odometer) : '',
-        placeholder: lastOdo ? fmtNum(lastOdo) : 'km', required: type === 'fuel',
-        hint: lastOdo ? `zuletzt ${fmtKm(lastOdo)}` : '',
+        label: unit.reading, name: 'odometer', inputmode: unit.decimals ? 'decimal' : 'numeric',
+        value: dec(e.odometer, unit.decimals),
+        placeholder: lastOdo ? fmtNum(lastOdo, unit.decimals) : unit.short, required: type === 'fuel',
+        hint: lastOdo ? `zuletzt ${fmtMeter(lastOdo, bike)}` : '',
       })}
     </div>
     ${specific}
@@ -712,8 +767,9 @@ export async function openEntryForm(type, entry = null, preset = {}) {
 
       const date = f.date.value;
       if (!date) fail('date', 'Bitte ein Datum wählen.');
-      const odometer = parseInteger(f.odometer.value);
-      if (type === 'fuel' && odometer == null) fail('odometer', 'Für die Verbrauchsberechnung wird der Kilometerstand benötigt.');
+      const odometer = parseMeter(f.odometer.value, bike);
+      if (Number.isNaN(odometer) || odometer < 0) fail('odometer', `Bitte eine gültige Zahl eingeben, z. B. ${unit.decimals ? '123,5' : '12.345'}`);
+      else if (type === 'fuel' && odometer == null) fail('odometer', `Für die Verbrauchsberechnung wird der Stand (${unit.label}) benötigt.`);
       const cost = parseDecimal(f.cost.value);
       if (Number.isNaN(cost) || cost < 0) fail('cost', 'Bitte einen gültigen Betrag eingeben, z. B. 24,90');
 
@@ -750,15 +806,15 @@ export async function openEntryForm(type, entry = null, preset = {}) {
       }
       if (!ok) return;
 
-      // Plausibilität: passt der Kilometerstand zu den anderen Einträgen?
+      // Plausibilität: passt der Zählerstand zu den anderen Einträgen?
       if (odometer != null) {
         // entries ist absteigend sortiert → erster Treffer = zeitlich nächster Widerspruch
         const others = entries.filter((x) => x.id !== data.id && Number.isFinite(x.odometer));
         const conflict = others.find((x) => x.date < date && x.odometer > odometer)
           || [...others].reverse().find((x) => x.date > date && x.odometer < odometer);
         if (conflict && !await confirmDialog(
-          `Der Kilometerstand ${fmtKm(odometer)} passt nicht zum Eintrag vom ${fmtDate(conflict.date)} (${fmtKm(conflict.odometer)}).\nTrotzdem speichern?`,
-          { title: 'Kilometerstand prüfen', ok: 'Speichern' },
+          `Der Stand ${fmtMeter(odometer, bike)} passt nicht zum Eintrag vom ${fmtDate(conflict.date)} (${fmtMeter(conflict.odometer, bike)}).\nTrotzdem speichern?`,
+          { title: `${unit.reading} prüfen`, ok: 'Speichern' },
         )) return;
       }
       if (type === 'fuel' && bike.tankVolume && data.liters > bike.tankVolume * 1.05) {
@@ -788,6 +844,9 @@ export async function openBikeForm(bike = null) {
       ${field({ label: 'Tankvolumen (l)', name: 'tankVolume', inputmode: 'decimal', value: b.tankVolume ? fmtNum(b.tankVolume, 1) : '', placeholder: 'z. B. 18' })}
     </div>
     ${field({ label: 'Kennzeichen', name: 'plate', value: b.plate || '', placeholder: 'z. B. W-12345X', attrs: 'autocapitalize="characters"' })}
+    ${segInput({ label: 'Zähler', name: 'meter', options: { km: 'Kilometer', h: 'Betriebsstunden' }, value: b.meter || 'km' })}
+    <p class="muted small" style="margin-top:-6px">${'Enduros und Crosser werden meist nach Betriebsstunden (Bh) gewartet – '
+      + 'dann gibst du überall Bh statt km ein, der Verbrauch wird in l/h berechnet.'}</p>
     <div class="field">
       <span class="lbl">Foto (optional)</span>
       <div class="bike">
@@ -857,6 +916,17 @@ export async function openBikeForm(bike = null) {
       const tankVolume = parseDecimal(f.tankVolume.value);
       if (Number.isNaN(tankVolume)) { setFieldError(form, 'tankVolume', 'Bitte eine Zahl eingeben, z. B. 17,5'); return; }
       const year = parseInteger(f.year.value);
+      const meter = form.querySelector('[name="meter"]:checked')?.value || 'km';
+
+      // Zähler bei vorhandenen Einträgen umstellen? Die Zahlen bleiben gleich, nur die Einheit ändert sich.
+      if (bike && (bike.meter || 'km') !== meter) {
+        const count = (await getEntries(bike.id)).filter((x) => Number.isFinite(x.odometer)).length;
+        if (count && !await confirmDialog(
+          `${count} Einträge haben schon einen Stand in ${meterOf(bike).label}. Nach dem Umstellen werden diese Zahlen `
+          + `als ${METERS[meter].label} gelesen.\nNur umstellen, wenn sie eigentlich schon ${METERS[meter].label} sind.`,
+          { title: 'Zähler umstellen?', ok: 'Umstellen' },
+        )) return;
+      }
 
       const data = {
         ...b,
@@ -867,6 +937,7 @@ export async function openBikeForm(bike = null) {
         year: year || null,
         plate: f.plate.value.trim().toUpperCase(),
         tankVolume: tankVolume || null,
+        meter,
         photo,
         createdAt: b.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),

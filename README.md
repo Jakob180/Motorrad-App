@@ -37,6 +37,19 @@ gecacht: [Chart.js](https://www.chartjs.org/) (Diagramme), ab Schritt 3 [Leaflet
 Für die Datenbank wird bewusst **keine** Bibliothek verwendet (kleiner eigener IndexedDB-Wrapper in
 `db.js`), damit das Logbuch garantiert auch beim ersten Offline-Start funktioniert.
 
+## Logbuch: Kilometer oder Betriebsstunden
+
+Pro Motorrad lässt sich im Formular unter **Zähler** wählen, ob es nach **Kilometern** oder nach
+**Betriebsstunden (Bh)** geführt wird – z. B. für Enduros und Crosser. Bei Betriebsstunden:
+
+- überall wird der Stand in Bh eingegeben (mit Kommastelle, z. B. `123,5`),
+- der Verbrauch wird in **l/h** statt l/100 km berechnet, Spritkosten in €/h,
+- statt Reichweite zeigt die App die **Laufzeit mit vollem Tank**,
+- die Statistik zeigt Betriebsstunden pro Monat/Jahr und Kosten pro Bh.
+
+Die gespeicherten Zahlen ändern sich beim Umstellen nicht – die App warnt deshalb, wenn ein
+Motorrad schon Einträge hat.
+
 ## Wetter & Fahr-Ampel
 
 - **Datenquelle:** [Open-Meteo](https://open-meteo.com/) (kostenlos, ohne API-Key) – Forecast-API für
