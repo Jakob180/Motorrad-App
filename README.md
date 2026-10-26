@@ -10,7 +10,7 @@ GitHub Pages und wird am iPhone über Safari → „Zum Home-Bildschirm" install
 |---|---|---|
 | 1 | Grundgerüst, Logbuch, Backup, Offline-Cache | ✅ fertig |
 | 2 | Wetter am Standort + Fahr-Ampel | ✅ fertig |
-| 3 | Wetter entlang einer Route (Karte, OSRM) | ⏳ |
+| 3 | Wetter entlang einer Route (Karte, OSRM) | ✅ fertig |
 | 4 | Service-Intervalle, Pickerl, Erinnerungen, .ics-Export | ⏳ |
 | 5 | Push-Benachrichtigungen (Cloudflare Worker) | ⏳ |
 
@@ -28,6 +28,7 @@ js/db.js            IndexedDB (lokale Datenbank), Einstellungen, API-Cache, Back
 js/ui.js            Formatierung (de-AT), Formularbausteine, Dialoge, Toasts
 js/weather.js       Wetter-Tab: Standort, Vorhersage (Open-Meteo), Ortssuche
 js/ampel.js         Fahr-Ampel: Bewertung pro Stunde + Tagesfazit (ohne DOM, auch für den Push-Server)
+js/route.js         Wetter entlang einer Route: Karte, OSRM-Route, Wetterpunkte, beste Abfahrt, Favoriten
 js/logbook.js       Logbuch: Motorräder, Einträge, Verbrauch, Statistik, Diagramme
 js/settings.js      Einstellungen: Ampel-Grenzwerte, Wohnort, Backup, Speicher, Updates
 ```
@@ -80,6 +81,28 @@ Die Logik steckt in `js/ampel.js` und kann ohne Browser getestet werden:
 ```bash
 node --input-type=module -e "import { rateHour } from './js/ampel.js'; console.log(rateHour({ temp: 6, rainProb: 50, rain: 0.2, gust: 30, code: 3 }, { rainProbYellow: 40, rainProbRed: 70, rainMmYellow: 0.5, rainMmRed: 2, tempYellow: 8, tempRed: 3, gustYellow: 50, gustRed: 70 }))"
 ```
+
+## Wetter entlang einer Route
+
+Im Wetter-Tab oben auf **Route** wechseln.
+
+1. **Start, Ziel, Zwischenstopps** (bis 5) per Ortssuche, GPS oder Tipp auf die Karte setzen.
+   Punkte auf der Karte lassen sich verschieben, **⇅ Umdrehen** tauscht Start und Ziel.
+2. **Tag** (heute + 3 Tage), **Abfahrt** und **Ø Tempo** wählen (Standard in den Einstellungen).
+3. **Route & Wetter berechnen**: Die Route kommt vom öffentlichen
+   [OSRM-Demo-Server](https://project-osrm.org/). Alle ca. 15 km wird ein Wetterpunkt gesetzt
+   und das Wetter für die Uhrzeit geprüft, zu der du dort ankommst (Ø Tempo, ohne Pausen).
+   Die Strecke wird nach der Ampel eingefärbt, darunter stehen Hinweise wie
+   *„Bei km 85 um 15:20 Uhr: Regen 80 % · 1,2 mm"*.
+4. **Beste Abfahrt:** Die App rechnet alle Abfahrtszeiten des Tages im 30-Minuten-Takt
+   innerhalb der Fahrzeit durch (ohne weitere Abfragen) und schlägt die beste vor – auch, wenn
+   ein anderer Tag besser wäre. Ankunft nach Sonnenuntergang zählt als Nachteil.
+5. **Favoriten:** Route speichern und später mit einem Tipp wieder laden.
+
+**Sparsam mit den Servern:** Eine Berechnung braucht genau eine Anfrage an OSRM und eine an
+Open-Meteo (alle Wetterpunkte gemeinsam). Routen werden 30 Tage gecacht, das Wetter 30 Minuten –
+Abfahrtszeit oder Tempo ändern löst gar keine Anfrage aus. Kartenkacheln kommen von
+OpenStreetMap und brauchen Internet.
 
 ## Lokal testen
 

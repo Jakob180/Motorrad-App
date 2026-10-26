@@ -761,6 +761,81 @@ details.card summary { min-height: 32px; font-weight: 700; cursor: pointer; }
 .legend li { position: relative; padding-left: 22px; }
 .legend li .dot { position: absolute; left: 0; top: 5px; }
 
+/* ---------- Route ---------- */
+
+.wp-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.wp-pin {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: 3px solid #0d0f12;
+  border-radius: 50%;
+  background: #cfd6df;
+  color: #0d0f12;
+  font-size: 14px;
+  font-weight: 800;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+.wp-pin.start { background: var(--green); }
+.wp-pin.end { background: var(--red); color: #fff; }
+.wp-btn {
+  flex: 1;
+  min-width: 0;
+  min-height: 52px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-weight: 650;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.wp-btn.empty { color: var(--text-dim); font-weight: 500; }
+.wp-gap { width: 48px; flex: none; }
+
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 8px; }
+.grid3 .field select { padding: 10px 28px 10px 10px; font-size: 16px; background-position: right 6px center; background-size: 18px; }
+
+/* isolation: Leaflets hohe z-Index-Werte bleiben in der Karte (sonst liegen sie über der Tab-Leiste) */
+.map-wrap { position: relative; z-index: 0; isolation: isolate; overflow: hidden; margin-bottom: 6px; border: 1px solid var(--border); border-radius: var(--radius); }
+#route-map { height: 340px; background: #1a1e24; }
+.map-hint { margin: 0 4px 14px; }
+
+/* Karte im Dunkelmodus: Kacheln invertieren, Route & Punkte bleiben farbig */
+#route-map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9); }
+#route-map .leaflet-control-attribution { background: rgba(13, 15, 18, 0.75); color: var(--text-dim); }
+#route-map .leaflet-control-attribution a { color: var(--text-dim); }
+#route-map .leaflet-bar a { width: 40px; height: 40px; line-height: 40px; background: var(--surface-2); color: var(--text); border-color: var(--border); }
+#route-map .leaflet-popup-content-wrapper,
+#route-map .leaflet-popup-tip { background: var(--surface-2); color: var(--text); }
+#route-map .leaflet-popup-content { margin: 12px 14px; font: 15px/1.45 var(--font); }
+#route-map .leaflet-popup-close-button { color: var(--text-dim); }
+.map-pick { display: flex; flex-direction: column; gap: 8px; }
+.map-pick .btn { width: 100%; justify-content: flex-start; }
+.lvl-text.l1 { color: var(--yellow); }
+.lvl-text.l2 { color: var(--red); }
+
+.steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; }
+.warn-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.warn-list li { position: relative; padding-left: 22px; }
+.warn-list .dot { position: absolute; left: 0; top: 6px; }
+.big { font-size: 22px; }
+
+.dep-strip .strip-bar i.sel { outline: 2px solid var(--text); outline-offset: 1px; }
+.dep-labels { display: flex; justify-content: space-between; margin-top: 4px; color: var(--text-dim); font-size: 12px; }
+
+.route-points .hour-head, .route-points .hour { grid-template-columns: 48px 62px 1fr 1fr 54px; }
+
+.fav-row { display: flex; gap: 6px; align-items: center; }
+.fav-row .item { flex: 1; min-width: 0; }
+
 /* ---------- Toasts ---------- */
 
 .toasts {

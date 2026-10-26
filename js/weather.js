@@ -9,7 +9,7 @@ import {
   esc, fmtNum, fmtTime, parseISODate, WEEKDAYS_SHORT, openSheet, toast, ICONS,
 } from './ui.js';
 
-const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
+export const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const REVERSE_URL = 'https://nominatim.openstreetmap.org/reverse';
 
@@ -18,7 +18,7 @@ const GPS_REUSE = 15 * 60 * 1000;             // letzte GPS-Position 15 Minuten 
 const REFRESH_AFTER = 10 * 60 * 1000;         // beim Tab-Wechsel nach 10 Minuten neu laden
 const PLACE_TTL = 30 * 24 * 3600 * 1000;      // Ortsnamen 30 Tage cachen
 
-const HOURLY = 'temperature_2m,precipitation_probability,precipitation,weather_code,cloud_cover,wind_speed_10m,wind_gusts_10m,is_day';
+export const HOURLY = 'temperature_2m,precipitation_probability,precipitation,weather_code,cloud_cover,wind_speed_10m,wind_gusts_10m,is_day';
 const DAILY = 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_gusts_10m_max,sunrise,sunset';
 const CURRENT = 'temperature_2m,weather_code,wind_speed_10m,wind_gusts_10m,is_day';
 
@@ -63,13 +63,18 @@ export function wmo(code, isDay = true) {
 // Netzwerk & APIs
 // ======================================================================
 
-/** JSON laden mit Zeitlimit und verständlichen Fehlermeldungen */
-export async function fetchJSON(url, { timeout = 12000, service = 'Der Dienst' } = {}) {
+/**
+ * JSON laden mit Zeitlimit und verständlichen Fehlermeldungen.
+ * acceptErrors: Fehlerantworten (4xx) trotzdem als JSON liefern (OSRM erklärt dort den Fehler)
+ */
+export async function fetchJSON(url, { timeout = 12000, service = 'Der Dienst', acceptErrors = false } = {}) {
   if (!navigator.onLine) throw new Error('Keine Internetverbindung.');
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeout);
   try {
     const res = await fetch(url, { signal: ctrl.signal });
+    if (res.status === 429) throw new Error(`${service} ist gerade überlastet – bitte in einer Minute nochmal versuchen.`);
+    if (!res.ok && acceptErrors && res.status < 500) return await res.json();
     if (!res.ok) throw new Error(`${service} meldet einen Fehler (${res.status}). Bitte später nochmal versuchen.`);
     return await res.json();
   } catch (err) {
@@ -295,7 +300,10 @@ async function rememberPlace(place) {
 // Ansicht
 // ======================================================================
 
-let root = null;
+let root = null;      // Bereich „Standort" (Vorhersage am Ort)
+let routeEl = null;   // Bereich „Route" (route.js, wird erst beim ersten Öffnen geladen)
+let routeModule = null;
+let navEl = null;
 const state = {
   settings: null,
   loc: null,        // { name, lat, lon, source: 'gps' | 'place' | 'home' | 'last' }
@@ -308,11 +316,40 @@ const state = {
 };
 
 export function init(el) {
-  root = el;
+  el.innerHTML = `<nav class="subnav" aria-label="Wetter-Bereiche">
+      <a href="#wetter" data-sub="standort">📍 Standort</a>
+      <a href="#wetter/route" data-sub="route">🗺️ Route</a>
+    </nav>
+    <div class="wx-local"></div>
+    <div class="wx-route" hidden></div>`;
+  navEl = el.querySelector('.subnav');
+  root = el.querySelector('.wx-local');
+  routeEl = el.querySelector('.wx-route');
   root.addEventListener('click', onClick);
 }
 
-export async function show() {
+/** sub = 'route' → Wetter entlang einer Route, sonst Vorhersage am Standort */
+export async function show(sub) {
+  const isRoute = sub === 'route';
+  for (const a of navEl.querySelectorAll('a')) {
+    const active = (a.dataset.sub === 'route') === isRoute;
+    a.classList.toggle('active', active);
+    if (active) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  }
+  root.hidden = isRoute;
+  routeEl.hidden = !isRoute;
+  if (isRoute) {
+    // Erst sichtbar machen, dann initialisieren – sonst kennt die Karte ihre Größe nicht
+    if (!routeModule) {
+      routeModule = await import('./route.js');
+      await routeModule.init(routeEl);
+    } else {
+      await routeModule.show();
+    }
+    return;
+  }
+
   state.settings = await db.getSettings();
   if (state.forecast && Date.now() - state.loadedAt < REFRESH_AFTER) render();
   else await load();

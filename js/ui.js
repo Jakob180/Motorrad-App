@@ -358,13 +358,26 @@ export function loadScript(src) {
   return scriptPromises.get(src);
 }
 
+const cssPromises = new Map();
+
+/** Lädt ein Stylesheet genau einmal (Leaflet) → Promise, sobald es geladen ist */
 export function loadCss(href) {
-  if (document.querySelector(`link[href="${href}"]`)) return;
-  const l = document.createElement('link');
-  l.rel = 'stylesheet';
-  l.href = href;
-  l.crossOrigin = 'anonymous';
-  document.head.append(l);
+  if (!cssPromises.has(href)) {
+    cssPromises.set(href, new Promise((resolve, reject) => {
+      const l = document.createElement('link');
+      l.rel = 'stylesheet';
+      l.href = href;
+      l.crossOrigin = 'anonymous';
+      l.onload = () => resolve();
+      l.onerror = () => {
+        cssPromises.delete(href);
+        l.remove();
+        reject(new Error('Stylesheet konnte nicht geladen werden – bist du offline?'));
+      };
+      document.head.append(l);
+    }));
+  }
+  return cssPromises.get(href);
 }
 
 // ---------- Dateien ----------

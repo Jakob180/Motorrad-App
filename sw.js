@@ -4,7 +4,7 @@
 // sonst bekommen installierte Apps die neuen Dateien nicht. Die App zeigt dann
 // den Hinweis „Neue Version verfügbar".
 
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = `motorrad-${VERSION}`;
 
 // Eigene App-Dateien (relativ, damit es auch unter https://name.github.io/repo/ klappt)
@@ -20,6 +20,7 @@ const APP_FILES = [
   './js/settings.js',
   './js/weather.js',
   './js/ampel.js',
+  './js/route.js',
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -29,6 +30,8 @@ const APP_FILES = [
 // Externe Bibliotheken (CDN) – werden mitgecacht, damit z. B. Diagramme offline gehen
 const CDN_FILES = [
   'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js',
+  'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js',
+  'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css',
 ];
 
 self.addEventListener('install', (event) => {

@@ -71,6 +71,16 @@ function homeCard(home) {
   </div>`;
 }
 
+function routeCard(settings) {
+  return `<div class="card">
+    <h3>🗺️ Routen</h3>
+    <p class="muted small">Mit diesem Durchschnittstempo (ohne Pausen) berechnet die App, wann du an welchem
+      Punkt der Route bist. Lässt sich auch direkt bei der Route ändern.</p>
+    ${field({ label: 'Durchschnittsgeschwindigkeit', name: 'avgSpeed', type: 'select', value: settings.avgSpeed,
+      options: rangeOptions(30, 110, ' km/h', settings.avgSpeed).filter(([v]) => v % 5 === 0 || v === settings.avgSpeed) })}
+  </div>`;
+}
+
 export async function show() {
   await render();
 }
@@ -88,6 +98,7 @@ async function render() {
   root.innerHTML = `
     ${ampelCard(settings.thresholds)}
     ${homeCard(settings.home)}
+    ${routeCard(settings)}
     <div class="card">
       <h3>💾 Datensicherung</h3>
       <p class="muted">iOS kann die Daten von Web-Apps löschen, z. B. wenn die App länger nicht geöffnet wurde
@@ -230,6 +241,11 @@ async function onSubmit(e) {
 }
 
 async function onChange(e) {
+  if (e.target.name === 'avgSpeed') {
+    await db.saveSettings({ avgSpeed: Number(e.target.value) });
+    toast(`Durchschnitt: ${e.target.value} km/h`, 'ok');
+    return;
+  }
   if (e.target.dataset.action !== 'import') return;
   const file = e.target.files?.[0];
   e.target.value = ''; // gleiche Datei erneut wählbar
