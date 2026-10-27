@@ -265,9 +265,16 @@ Der Worker muss dafür einmal mit dem aktuellen Code hochgeladen sein: `cd worke
 
 Verwendet wird `openai/gpt-oss-120b` mit Groqs eingebauter Browser-Suche. Groq kann Websuche und
 strukturierte Ausgabe nicht im selben Aufruf, daher zwei Schritte: erst recherchieren, dann die Notizen
-in ein festes JSON-Schema übertragen. Im Gratis-Kontingent gelten Limits pro Minute/Tag – bei
-„Groq-Limit erreicht" einfach später nochmal versuchen. Laut Groq-Doku sind die früheren
-„compound"-Modelle seit 21.09.2026 abgeschaltet, deshalb gpt-oss.
+in ein festes JSON-Schema übertragen. Laut Groq-Doku sind die früheren „compound"-Modelle seit
+21.09.2026 abgeschaltet, deshalb gpt-oss.
+
+**Gratis-Limits:** Groq begrenzt die Token pro Tag und **pro Modell** (z. B. 200.000 für
+`gpt-oss-120b`). Die Websuche liest die gefundenen Webseiten mit – eine Recherche kann daher
+mehrere zehntausend Token kosten, nach ein paar Versuchen ist das Tageskontingent weg. Deshalb:
+- Ist `gpt-oss-120b` am Limit, recherchiert automatisch `openai/gpt-oss-20b` (eigenes Kontingent).
+- Das Übertragen ins JSON läuft auf dem kleinen Modell und spart das Kontingent des großen.
+- Sind beide am Limit, sagt die App, wann es wieder geht („… wieder möglich in ca. 24 Minuten").
+- Erfolgreiche Recherchen werden 30 Tage gespeichert – „Neu recherchieren" nur, wenn nötig.
 
 **Claude (kostenpflichtig, meist genauer):** Anbieter **Claude** wählen und einen Schlüssel von
 [console.anthropic.com](https://console.anthropic.com) eintragen (Guthaben nötig) – oder das Feld leer

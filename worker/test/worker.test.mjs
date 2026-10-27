@@ -367,6 +367,7 @@ await test('Groq: 1) Browser-Suche, 2) striktes JSON – Schlüssel aus der App'
   assert.equal(research.body.tool_choice, 'required');
   assert.equal(research.body.model, 'openai/gpt-oss-120b');
   assert.equal(extract.body.tools, undefined);
+  assert.equal(extract.body.model, 'openai/gpt-oss-20b'); // Übertragen spart das große Kontingent
   assert.equal(extract.body.response_format.type, 'json_schema');
   assert.equal(extract.body.response_format.json_schema.strict, true);
   assert.match(extract.body.messages[1].content, /Zündkerze: NGK BR7ES/);
@@ -382,15 +383,37 @@ await test('Groq: zweite Anfrage aus dem Cache, getrennt vom Claude-Cache', asyn
   assert.equal(groqCalls.length, before);
 });
 
-await test('Groq: ungültiger Schlüssel und Gratis-Limit verständlich', async () => {
+// Echte Groq-Meldung (Tageslimit des Gratis-Kontingents)
+const tpdError = (model) => `Rate limit reached for model \`${model}\` in organization \`org_x\` service tier \`on_demand\` `
+  + 'on tokens per day (TPD): Limit 200000, Used 200000, Requested 3324. Please try again in 23m55.967999999s.';
+
+await test('Groq: großes Modell am Tageslimit → kleines Modell recherchiert', async () => {
+  const before = groqCalls.length;
+  groqReplies.push({ status: 429, error: tpdError('openai/gpt-oss-120b') }, { content: groqNotes }, { content: groqJson });
+  const res = await askGroq({ force: true });
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.model, 'openai/gpt-oss-20b');
+  assert.deepEqual(groqCalls.slice(before).map((c) => c.body.model), ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'openai/gpt-oss-20b']);
+  assert.deepEqual(groqCalls[before + 1].body.tools, [{ type: 'browser_search' }]);
+});
+
+await test('Groq: ungültiger Schlüssel und Tageslimit (beide Modelle) verständlich', async () => {
   groqReplies.push({ status: 401, error: 'Invalid API Key' });
   let res = await askGroq({ force: true });
   assert.equal(res.status, 400);
   assert.match((await res.json()).error, /Groq-Schlüssel ist ungültig/);
-  groqReplies.push({ status: 429, error: 'Rate limit reached' });
+  groqReplies.push({ status: 429, error: tpdError('openai/gpt-oss-120b') }, { status: 429, error: tpdError('openai/gpt-oss-20b') });
   res = await askGroq({ force: true });
   assert.equal(res.status, 429);
-  assert.match((await res.json()).error, /Groq-Limit erreicht/);
+  assert.equal((await res.json()).error, 'Groq-Tageslimit des Gratis-Kontingents erreicht – wieder möglich in ca. 24 Minuten.');
+});
+
+await test('Groq-Limittexte: Minuten-, Stunden- und Minutenlimit', async () => {
+  const { groqLimitText } = await import('../src/ai.js');
+  assert.equal(groqLimitText('… tokens per minute (TPM) … Please try again in 7.5s.'), 'Groq-Minutenlimit des Gratis-Kontingents erreicht – in einer Minute wieder möglich.');
+  assert.equal(groqLimitText('… requests per day (RPD) … Please try again in 3h12m.'), 'Groq-Tageslimit des Gratis-Kontingents erreicht – wieder möglich in ca. 3 Stunden.');
+  assert.equal(groqLimitText(''), 'Groq-Minutenlimit des Gratis-Kontingents erreicht.');
 });
 
 await test('Groq: kaputtes JSON → Fehlermeldung statt Absturz', async () => {

@@ -1,6 +1,7 @@
 // ai.js – KI-Recherche der Wartungsdaten eines Motorrads (Öl, Filter, Reifen, Kette …).
 // Zwei Anbieter:
-//   groq      – openai/gpt-oss-120b mit eingebauter Browser-Suche (Groq-Schlüssel kommt aus der App)
+//   groq      – openai/gpt-oss-120b (bei Limit gpt-oss-20b) mit eingebauter Browser-Suche
+//               (Groq-Schlüssel kommt aus der App)
 //   anthropic – Claude mit Websuche (Schlüssel aus der App oder als Worker-Secret ANTHROPIC_API_KEY)
 // Schlüssel aus der App werden nur für die Anfrage verwendet, nie gespeichert oder geloggt.
 // Ergebnisse werden 30 Tage in KV gecacht, ein Tageslimit schützt vor Kosten bzw. Gratis-Limits.
@@ -9,7 +10,11 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const MODEL = 'claude-opus-5-5';
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'openai/gpt-oss-120b';
+// Groq zählt die Gratis-Limits pro Modell: ist eines aufgebraucht, wird das andere versucht.
+// Recherche zuerst mit dem großen Modell, das Übertragen ins JSON zuerst mit dem kleinen
+// (spart das knappe Kontingent des großen Modells).
+const GROQ_RESEARCH_MODELS = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'];
+const GROQ_EXTRACT_MODELS = ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'];
 const CACHE_TTL = 30 * 86400;     // Sekunden
 const DEFAULT_DAILY_LIMIT = 20;   // KI-Abfragen pro Tag (Variable AI_DAILY_LIMIT)
 
@@ -170,6 +175,27 @@ const GROQ_EXTRACT = `Übertrage die Recherche-Notizen zu einem Motorrad in das 
 Angaben → leerer String "". Werte kurz, auf Deutsch, metrische Einheiten, Dezimalkomma.
 sources: die in den Notizen genannten URLs (höchstens 5). confidence: hoch nur bei Herstellerquellen.`;
 
+/** Groq-Limit erreicht (429) – Anlass, es mit dem anderen Modell zu versuchen */
+class GroqLimitError extends AiError {}
+
+/**
+ * Groq-Limitmeldung verständlich machen, z. B.
+ * "… tokens per day (TPD): Limit 200000 … Please try again in 23m55.9s"
+ * → "Groq-Tageslimit des Gratis-Kontingents erreicht – wieder möglich in ca. 24 Minuten."
+ */
+export function groqLimitText(message = '') {
+  const m = /try again in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?/i.exec(message);
+  let wait = '';
+  if (m && (m[1] || m[2] || m[3])) {
+    const minutes = Math.ceil((Number(m[1] || 0) * 3600 + Number(m[2] || 0) * 60 + Number(m[3] || 0)) / 60);
+    if (minutes >= 120) wait = ` – wieder möglich in ca. ${Math.round(minutes / 60)} Stunden`;
+    else if (minutes > 1) wait = ` – wieder möglich in ca. ${minutes} Minuten`;
+    else wait = ' – in einer Minute wieder möglich';
+  }
+  const daily = /per day|\bTPD\b|\bRPD\b/i.test(message);
+  return `Groq-${daily ? 'Tageslimit' : 'Minutenlimit'} des Gratis-Kontingents erreicht${wait}.`;
+}
+
 /** Aufruf der Groq-API (OpenAI-kompatibel) mit verständlichen Fehlern */
 async function groqCall(apiKey, body) {
   let res;
@@ -184,15 +210,28 @@ async function groqCall(apiKey, body) {
   }
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) throw new AiError('Der Groq-Schlüssel ist ungültig – bitte in den Einstellungen prüfen.', 400);
-  if (res.status === 429) throw new AiError('Groq-Limit erreicht (Gratis-Kontingent) – bitte später nochmal versuchen.', 429);
+  if (res.status === 429) throw new GroqLimitError(groqLimitText(data.error?.message), 429);
   if (!res.ok) throw new AiError(`Groq meldet einen Fehler (${res.status}): ${clean(data.error?.message, 150)}`, 502);
   return data.choices?.[0]?.message?.content || '';
 }
 
+/** Mit dem ersten Modell versuchen, bei Limit mit dem nächsten → { content, model } */
+async function groqWithFallback(apiKey, models, body) {
+  let limit;
+  for (const model of models) {
+    try {
+      return { content: await groqCall(apiKey, { ...body, model }), model };
+    } catch (err) {
+      if (!(err instanceof GroqLimitError)) throw err;
+      limit = err;
+    }
+  }
+  throw limit;
+}
+
 /** Groq: 1) recherchieren mit Browser-Suche, 2) Notizen in striktes JSON überführen */
 async function askGroq(apiKey, bike) {
-  const notes = await groqCall(apiKey, {
-    model: GROQ_MODEL,
+  const { content: notes, model } = await groqWithFallback(apiKey, GROQ_RESEARCH_MODELS, {
     messages: [
       { role: 'system', content: GROQ_RESEARCH },
       { role: 'user', content: `Motorrad: ${describe(bike)}. Ermittle die Wartungsdaten.` },
@@ -205,8 +244,7 @@ async function askGroq(apiKey, bike) {
   if (!notes.trim()) throw new AiError('Groq hat keine Recherche geliefert.', 502);
 
   // Browser-Suche und strukturierte Ausgabe gehen bei Groq nicht im selben Aufruf
-  const json = await groqCall(apiKey, {
-    model: GROQ_MODEL,
+  const { content: json } = await groqWithFallback(apiKey, GROQ_EXTRACT_MODELS, {
     messages: [
       { role: 'system', content: GROQ_EXTRACT },
       { role: 'user', content: `Motorrad: ${describe(bike)}\n\nRecherche-Notizen:\n${notes.slice(0, 12000)}` },
@@ -225,7 +263,7 @@ async function askGroq(apiKey, bike) {
     throw new AiError('Groq hat ungültige Daten geliefert – bitte nochmal versuchen.', 502);
   }
   const found = [...new Set(notes.match(/https?:\/\/[^\s)\]】>"'<,]+/g) || [])].map((url) => ({ title: url, url }));
-  return { ...sanitize(input, found), model: GROQ_MODEL };
+  return { ...sanitize(input, found), model };
 }
 
 /**
