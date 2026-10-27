@@ -166,7 +166,8 @@ locker). Du brauchst [Node.js](https://nodejs.org/) (Version 18 oder neuer).
 
 1. **Cloudflare-Konto anlegen:** [dash.cloudflare.com/sign-up](https://dash.cloudflare.com/sign-up).
    Danach im Dashboard links **Workers & Pages** öffnen und einmal eine
-   `workers.dev`-Subdomain wählen (z. B. `jakob180`).
+   `workers.dev`-Subdomain wählen (Cloudflare schlägt oft einen Namen aus der E-Mail-Adresse vor,
+   z. B. `jakobf1805` – das ist NICHT der GitHub-Name).
 
 2. **Wrangler (Cloudflare-Werkzeug) installieren** – im Projektordner:
 
@@ -200,7 +201,8 @@ locker). Du brauchst [Node.js](https://nodejs.org/) (Version 18 oder neuer).
    npx wrangler deploy
    ```
 
-   Am Ende steht die Adresse, z. B. `https://motorrad-push.jakob180.workers.dev` – notieren.
+   Am Ende steht die Adresse, z. B. `https://motorrad-push.jakobf1805.workers.dev` – **genau diese**
+   Adresse notieren und später in der App eintragen (Subdomain = die aus Schritt 1).
 
 7. **Schlüssel und Token erzeugen** (speichert alles als geheime Secrets bei Cloudflare):
 
