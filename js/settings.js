@@ -133,14 +133,24 @@ function pushCard(cfg, home) {
   </div>`;
 }
 
-const AI_PROVIDERS = {
-  groq: { label: 'Groq (kostenloses Kontingent)', keyUrl: 'https://console.groq.com/keys', keyName: 'Groq-Schlüssel' },
-  anthropic: { label: 'Claude (kostenpflichtig)', keyUrl: 'https://console.anthropic.com/settings/keys', keyName: 'Claude-Schlüssel' },
+// prefix: woran man den Schlüssel des Anbieters erkennt (für die Plausibilitätsprüfung)
+export const AI_PROVIDERS = {
+  openrouter: { label: 'OpenRouter (Gratis-Modelle)', name: 'OpenRouter', keyUrl: 'https://openrouter.ai/settings/keys', prefix: 'sk-or-' },
+  groq: { label: 'Groq (kostenloses Kontingent)', name: 'Groq', keyUrl: 'https://console.groq.com/keys', prefix: 'gsk_' },
+  anthropic: { label: 'Claude (kostenpflichtig)', name: 'Claude', keyUrl: 'https://console.anthropic.com/settings/keys', prefix: 'sk-ant-' },
+};
+export const DEFAULT_AI = { provider: 'openrouter', apiKey: '', model: 'openrouter/free', web: false };
+
+const keyHint = (provider) => {
+  const p = AI_PROVIDERS[provider];
+  return `Erstellen: <a href="${p.keyUrl}" target="_blank" rel="noopener">${p.keyUrl.replace('https://', '')}</a>`
+    + (provider === 'anthropic' ? ' · leer lassen, wenn der Schlüssel im Worker gesetzt ist' : '');
 };
 
-/** KI für die Wartungsdaten: Anbieter und eigener Schlüssel (nur auf diesem Gerät) */
+/** KI für die Wartungsdaten: Anbieter, eigener Schlüssel, bei OpenRouter Modell und Websuche */
 function aiCard(ai) {
-  const p = AI_PROVIDERS[ai.provider] || AI_PROVIDERS.groq;
+  const p = AI_PROVIDERS[ai.provider] || AI_PROVIDERS.openrouter;
+  const isOR = ai.provider === 'openrouter';
   return `<div class="card">
     <h3>🤖 KI für Wartungsdaten</h3>
     <p class="muted small">Recherchiert Öl, Filter, Reifen &amp; Co. für dein Motorrad (Garage → Wartungsdaten → „Mit KI ausfüllen").
@@ -149,10 +159,16 @@ function aiCard(ai) {
     <form id="ai-form" class="mt" novalidate>
       ${field({ label: 'Anbieter', name: 'provider', type: 'select', value: ai.provider,
         options: Object.entries(AI_PROVIDERS).map(([k, v]) => [k, v.label]) })}
-      ${field({ label: p.keyName, name: 'apiKey', type: 'password', value: ai.apiKey,
-        placeholder: ai.provider === 'groq' ? 'gsk_…' : 'sk-ant-…', attrs: 'autocapitalize="off" spellcheck="false" autocomplete="off"',
-        hint: `Erstellen: <a href="${p.keyUrl}" target="_blank" rel="noopener">${p.keyUrl.replace('https://', '')}</a>`
-          + (ai.provider === 'anthropic' ? ' · leer lassen, wenn der Schlüssel im Worker gesetzt ist' : '') })}
+      ${field({ label: `${p.name}-Schlüssel`, name: 'apiKey', type: 'password', value: ai.apiKey,
+        placeholder: `${p.prefix}…`, attrs: 'autocapitalize="off" spellcheck="false" autocomplete="off"', hint: keyHint(ai.provider) })}
+      <div data-or-only ${isOR ? '' : 'hidden'}>
+        ${field({ label: 'Modell', name: 'model', value: ai.model || DEFAULT_AI.model, placeholder: DEFAULT_AI.model,
+          attrs: 'autocapitalize="off" spellcheck="false"',
+          hint: '„openrouter/free" wählt automatisch ein kostenloses Modell (50 Anfragen pro Tag). '
+            + 'Alternativ eine Modell-ID von <a href="https://openrouter.ai/models" target="_blank" rel="noopener">openrouter.ai/models</a>.' })}
+        ${switchRow({ label: '🌐 Websuche', name: 'web', checked: !!ai.web,
+          hint: 'Genauer, kostet aber ca. 1 Cent pro Recherche – braucht OpenRouter-Guthaben' })}
+      </div>
       <button type="submit" class="btn btn-primary btn-block">${ICONS.check} Speichern</button>
     </form>
   </div>`;
@@ -165,10 +181,22 @@ async function onAiSubmit(e) {
   clearFieldErrors(form);
   const provider = form.elements.provider.value;
   const apiKey = form.elements.apiKey.value.trim();
-  if (provider === 'groq' && !apiKey) { setFieldError(form, 'apiKey', 'Bitte deinen Groq-Schlüssel eintragen.'); return; }
-  if (provider === 'groq' && apiKey.startsWith('sk-ant-')) { setFieldError(form, 'apiKey', 'Das ist ein Claude-Schlüssel – Anbieter auf Claude stellen.'); return; }
-  if (provider === 'anthropic' && apiKey.startsWith('gsk_')) { setFieldError(form, 'apiKey', 'Das ist ein Groq-Schlüssel – Anbieter auf Groq stellen.'); return; }
-  await db.saveDeviceSettings({ ai: { provider, apiKey } });
+  const model = form.elements.model.value.trim() || DEFAULT_AI.model;
+  if (provider !== 'anthropic' && !apiKey) {
+    setFieldError(form, 'apiKey', `Bitte deinen ${AI_PROVIDERS[provider].name}-Schlüssel eintragen.`);
+    return;
+  }
+  // Schlüssel eines anderen Anbieters erkannt? (häufiger Kopierfehler)
+  const owner = Object.entries(AI_PROVIDERS).find(([, p]) => apiKey.startsWith(p.prefix));
+  if (owner && owner[0] !== provider) {
+    setFieldError(form, 'apiKey', `Das ist ein ${owner[1].name}-Schlüssel – Anbieter auf ${owner[1].name} stellen.`);
+    return;
+  }
+  if (provider === 'openrouter' && !/^[\w.\-/:]{3,100}$/.test(model)) {
+    setFieldError(form, 'model', 'Bitte eine gültige Modell-ID eingeben, z. B. openrouter/free');
+    return;
+  }
+  await db.saveDeviceSettings({ ai: { provider, apiKey, model, web: form.elements.web.checked } });
   toast('KI-Einstellungen gespeichert', 'ok');
   await render();
 }
@@ -197,7 +225,7 @@ async function render() {
   const [settings, counts, storage, version, pushCfg, device] = await Promise.all([
     db.getSettings(), db.counts(), storageInfo(), swVersion(), getPushConfig(), db.getDeviceSettings(),
   ]);
-  const ai = { provider: 'groq', apiKey: '', ...(device.ai || {}) };
+  const ai = { ...DEFAULT_AI, ...(device.ai || {}) };
   backupFile = await prepareBackup();
 
   const last = settings.lastBackup;
@@ -414,13 +442,13 @@ async function onSubmit(e) {
 
 async function onChange(e) {
   if (e.target.name === 'provider' && e.target.form?.id === 'ai-form') {
-    // Beschriftung und Link zum Schlüssel an den gewählten Anbieter anpassen
+    // Beschriftung, Link und OpenRouter-Felder an den gewählten Anbieter anpassen
     const p = AI_PROVIDERS[e.target.value];
     const wrap = e.target.form.querySelector('[data-field="apiKey"]');
-    wrap.querySelector('.lbl').textContent = p.keyName;
-    wrap.querySelector('input').placeholder = e.target.value === 'groq' ? 'gsk_…' : 'sk-ant-…';
-    wrap.querySelector('.hint').innerHTML = `Erstellen: <a href="${p.keyUrl}" target="_blank" rel="noopener">${p.keyUrl.replace('https://', '')}</a>`
-      + (e.target.value === 'anthropic' ? ' · leer lassen, wenn der Schlüssel im Worker gesetzt ist' : '');
+    wrap.querySelector('.lbl').textContent = `${p.name}-Schlüssel`;
+    wrap.querySelector('input').placeholder = `${p.prefix}…`;
+    wrap.querySelector('.hint').innerHTML = keyHint(e.target.value);
+    e.target.form.querySelector('[data-or-only]').hidden = e.target.value !== 'openrouter';
     return;
   }
   if (e.target.name === 'avgSpeed') {

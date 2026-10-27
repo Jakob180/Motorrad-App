@@ -39,7 +39,7 @@ worker/             Push-Server (Cloudflare Worker) – wird NICHT über GitHub 
   wrangler.toml     Worker-Konfiguration (KV, Cron, erlaubte Adressen)
   src/index.js      API, stündlicher Cron, Morgen-Nachricht (nutzt js/ampel.js mit)
   src/webpush.js    Web-Push-Verschlüsselung (RFC 8291) und VAPID – ohne externe Bibliothek
-  src/ai.js         KI-Recherche der Wartungsdaten (Groq oder Claude, mit Websuche), Cache, Tageslimit
+  src/ai.js         KI-Recherche der Wartungsdaten (OpenRouter, Groq oder Claude), Cache, Tageslimit
   scripts/setup.mjs erzeugt VAPID-Schlüssel + Token und speichert sie als Secrets
   test/             Tests (npm test) – laufen ohne Cloudflare-Konto
 ```
@@ -247,7 +247,7 @@ Ritzel, Reifen, Reifendruck, Bremsflüssigkeit und -beläge.
 - **🛒 Teile** bei jedem Service-Intervall zeigt, was du für genau diese Wartung brauchst (z. B. beim
   Ölwechsel Öl + Filter, beim Kette-Schmieren Kettenspray), inkl. „zuletzt verwendet" aus dem Logbuch
   und Such-Links zu **Louis, Polo, Amazon** und einem **Preisvergleich**. Gekauft wird im Shop selbst.
-- **✨ Mit KI ausfüllen** lässt eine KI (Groq oder Claude) die Daten im Web recherchieren (Herstellerangaben, Handbücher).
+- **✨ Mit KI ausfüllen** lässt eine KI (OpenRouter, Groq oder Claude) die Daten ermitteln – mit Websuche nach Herstellerangaben und Handbüchern, wo verfügbar.
   Leere Felder werden ausgefüllt, abweichende Werte nur als Vorschlag zum Übernehmen angezeigt,
   mit Quellen und Einschätzung der Sicherheit. **Immer mit dem Handbuch abgleichen** – falsches Öl
   (z. B. Autoöl bei Nasskupplung) kann teuer werden.
@@ -257,7 +257,24 @@ Ritzel, Reifen, Reifendruck, Bremsflüssigkeit und -beläge.
 Die Anfrage läuft immer über deinen Worker (Server-Adresse und Token wie bei den Benachrichtigungen).
 Der Worker muss dafür einmal mit dem aktuellen Code hochgeladen sein: `cd worker` → `npx wrangler deploy`.
 
-**Groq (Standard, kostenloses Kontingent):**
+**OpenRouter (Standard, Gratis-Modelle):**
+
+1. Auf [openrouter.ai](https://openrouter.ai) anmelden und unter **Keys**
+   ([openrouter.ai/settings/keys](https://openrouter.ai/settings/keys)) einen Schlüssel erstellen (beginnt mit `sk-or-`).
+2. In der App: **Einstellungen → 🤖 KI für Wartungsdaten** → Anbieter **OpenRouter** → Schlüssel einfügen → Speichern.
+
+- **Modell:** Standard ist `openrouter/free` – ein Router von OpenRouter, der automatisch ein gerade
+  verfügbares **kostenloses** Modell wählt, das strukturierte Ausgabe kann (welches, steht danach in der
+  Info-Box). Die einzelnen Gratis-Modelle wechseln häufig, der Router bleibt. Alternativ eine eigene
+  Modell-ID von [openrouter.ai/models](https://openrouter.ai/models) eintragen.
+- **Limits:** Gratis-Modelle laut OpenRouter-Doku 20 Anfragen/Minute und **50 pro Tag** – wer einmal
+  mindestens 10 Credits gekauft hat, bekommt 1.000 pro Tag. Eine Recherche = eine Anfrage.
+- **🌐 Websuche (Schalter, standardmäßig aus):** Ohne Websuche antwortet das Modell aus seinem Wissen –
+  kostenlos, aber ungenauer (die App markiert die Sicherheit dann höchstens als „mittel"). Mit Websuche
+  hängt OpenRouter Suchergebnisse (Exa) an, ca. **0,7 Cent pro Recherche**; das braucht OpenRouter-Guthaben,
+  auch bei Gratis-Modellen. Ohne Guthaben meldet die App das verständlich.
+
+**Groq (kostenloses Kontingent):**
 
 1. Auf [console.groq.com](https://console.groq.com) anmelden und unter **API Keys**
    ([console.groq.com/keys](https://console.groq.com/keys)) einen Schlüssel erstellen (beginnt mit `gsk_`).

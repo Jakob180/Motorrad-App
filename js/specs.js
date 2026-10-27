@@ -167,10 +167,11 @@ export async function openSpecsForm(bike, { autoAi = false } = {}) {
           toast('Bitte zuerst beim Motorrad (Garage → Bearbeiten) Marke und Modell eintragen.', 'error', 6000);
           return;
         }
-        // Anbieter und Schlüssel aus den Einstellungen (nur auf diesem Gerät gespeichert)
-        const ai = { provider: 'groq', apiKey: '', ...((await db.getDeviceSettings()).ai || {}) };
-        if (ai.provider === 'groq' && !ai.apiKey) {
-          toast('Trag zuerst deinen Groq-Schlüssel ein: Einstellungen → 🤖 KI für Wartungsdaten.', 'error', 7000);
+        // Anbieter, Schlüssel und Modell aus den Einstellungen (nur auf diesem Gerät gespeichert)
+        const ai = { provider: 'openrouter', apiKey: '', model: 'openrouter/free', web: false, ...((await db.getDeviceSettings()).ai || {}) };
+        if (ai.provider !== 'anthropic' && !ai.apiKey) {
+          const name = ai.provider === 'groq' ? 'Groq' : 'OpenRouter';
+          toast(`Trag zuerst deinen ${name}-Schlüssel ein: Einstellungen → 🤖 KI für Wartungsdaten.`, 'error', 7000);
           return;
         }
         btn.disabled = true;
@@ -179,7 +180,7 @@ export async function openSpecsForm(bike, { autoAi = false } = {}) {
           const { workerRequest } = await import('./push.js');
           const r = await workerRequest('POST', '/api/ai/specs', {
             brand: bike.brand, model: bike.model, year: bike.year || null, meter: bike.meter || 'km', force,
-            provider: ai.provider, apiKey: ai.apiKey,
+            provider: ai.provider, apiKey: ai.apiKey, model: ai.model, web: !!ai.web,
           }, { timeout: 150000 });
           let filled = 0;
           let offered = 0;

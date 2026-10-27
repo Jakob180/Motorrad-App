@@ -6,7 +6,7 @@
 //   DELETE /api/device/:id            Gerät abmelden
 //   POST   /api/device/:id/test       Test-Nachricht senden
 //   POST   /api/device/:id/run        Morgen-Nachricht sofort erzeugen (zum Testen)
-//   POST   /api/ai/specs              Wartungsdaten per KI recherchieren (ai.js; Groq oder Claude)
+//   POST   /api/ai/specs              Wartungsdaten per KI recherchieren (ai.js; OpenRouter, Groq, Claude)
 //
 // Cron: läuft stündlich (UTC). Für jedes Gerät wird geprüft, ob in Europe/Vienna gerade die
 // gewünschte Uhrzeit ist – so stimmt die Zeit auch bei Sommer-/Winterzeit.
@@ -302,9 +302,13 @@ async function handle(request, env) {
       const result = await lookupSpecs(env, bike, {
         force: body.force === true,
         today: localNow(env.TIMEZONE || 'Europe/Vienna').date,
-        provider: body.provider === 'groq' ? 'groq' : 'anthropic',
+        provider: ['openrouter', 'groq'].includes(body.provider) ? body.provider : 'anthropic',
         // Schlüssel aus der App: nur für diese Anfrage, wird nicht gespeichert/geloggt
         apiKey: typeof body.apiKey === 'string' ? body.apiKey.trim().slice(0, 300) : '',
+        options: {
+          model: typeof body.model === 'string' && /^[\w.\-/:]{3,100}$/.test(body.model.trim()) ? body.model.trim() : undefined,
+          web: body.web === true,
+        },
       });
       return json(result, 200, cors);
     } catch (err) {

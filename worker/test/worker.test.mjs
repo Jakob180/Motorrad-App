@@ -110,10 +110,17 @@ const claudeCalls = [];     // Anfragen an die Claude-API
 const claudeReplies = [];   // vorbereitete Antworten der Claude-API (Warteschlange)
 const groqCalls = [];       // Anfragen an die Groq-API
 const groqReplies = [];     // vorbereitete Antworten der Groq-API
+const orCalls = [];         // Anfragen an OpenRouter
+const orReplies = [];       // vorbereitete Antworten von OpenRouter
 
 globalThis.fetch = async (input, init = {}) => {
   const url = String(input);
   if (url.startsWith('https://api.open-meteo.com/')) return new Response(JSON.stringify(fakeForecast()));
+  if (url.startsWith('https://openrouter.ai/')) {
+    orCalls.push({ headers: new Headers(init.headers), body: JSON.parse(init.body) });
+    const { status = 200, body, headers = {} } = orReplies.shift();
+    return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
+  }
   if (url.startsWith('https://api.groq.com/')) {
     groqCalls.push({ headers: new Headers(init.headers), body: JSON.parse(init.body) });
     const { status = 200, content = '', error } = groqReplies.shift();
@@ -420,6 +427,77 @@ await test('Groq: kaputtes JSON → Fehlermeldung statt Absturz', async () => {
   groqReplies.push({ content: groqNotes }, { content: '{"kaputt":' });
   const res = await askGroq({ force: true });
   assert.equal(res.status, 502);
+  assert.match((await res.json()).error, /ungültige Daten/);
+});
+
+// ---------- KI über OpenRouter (Standard) ----------
+
+const askOR = (extra = {}) => askSpecs({ provider: 'openrouter', apiKey: 'sk-or-test', ...extra });
+const orOk = (content, extra = {}) => ({
+  body: { id: 'gen-1', model: 'google/gemma-4-31b-it:free', choices: [{ index: 0, message: { role: 'assistant', content, ...extra }, finish_reason: 'stop' }] },
+});
+
+await test('OpenRouter ohne Schlüssel: Hinweis auf die Einstellungen', async () => {
+  const res = await askSpecs({ provider: 'openrouter' });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /OpenRouter-Schlüssel in den Einstellungen/);
+});
+
+await test('OpenRouter Standard: openrouter/free, striktes JSON, ohne Websuche', async () => {
+  orReplies.push(orOk('```json\n' + JSON.stringify(specsInput) + '\n```'));
+  const res = await askOR();
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.model, 'google/gemma-4-31b-it:free'); // vom Router gewähltes Gratis-Modell
+  assert.equal(data.specs.gearOil, 'SAE 10W-40, 0,8 l');
+  const req = orCalls.at(-1);
+  assert.equal(req.headers.get('authorization'), 'Bearer sk-or-test');
+  assert.equal(req.body.model, 'openrouter/free');
+  assert.equal(req.body.response_format.json_schema.strict, true);
+  assert.deepEqual(req.body.provider, { require_parameters: true });
+  assert.equal(req.body.plugins, undefined);
+  assert.match(req.body.messages[0].content, /keine Websuche/);
+});
+
+await test('OpenRouter mit Websuche: Plugin "web", Quellen aus den Annotationen, eigener Cache', async () => {
+  orReplies.push(orOk(JSON.stringify({ ...specsInput, sources: [] }), {
+    annotations: [{ type: 'url_citation', url_citation: { url: 'https://www.husqvarna-motorcycles.com/de/te300', title: 'Husqvarna TE 300' } }],
+  }));
+  const before = orCalls.length;
+  const data = await (await askOR({ web: true, model: 'google/gemma-4-31b-it:free' })).json();
+  assert.equal(orCalls.length - before, 1); // nicht aus dem Cache der Variante ohne Websuche
+  assert.equal(data.sources[0].title, 'Husqvarna TE 300');
+  const req = orCalls.at(-1);
+  assert.equal(req.body.model, 'google/gemma-4-31b-it:free');
+  assert.deepEqual(req.body.plugins, [{ id: 'web', engine: 'exa', max_results: 5 }]);
+  // zweites Mal: aus dem Cache
+  assert.equal((await (await askOR({ web: true, model: 'google/gemma-4-31b-it:free' })).json()).cached, true);
+});
+
+await test('OpenRouter-Fehler verständlich: Guthaben, Limit, Modell, Schlüssel', async () => {
+  orReplies.push({ status: 402, body: { error: { code: 402, message: 'Insufficient credits' } } });
+  let res = await askOR({ web: true, force: true });
+  assert.equal(res.status, 402);
+  assert.match((await res.json()).error, /Websuche braucht OpenRouter Guthaben/);
+  orReplies.push({ status: 429, body: { error: { code: 429, message: 'Rate limit exceeded' } }, headers: { 'retry-after': '1440' } });
+  res = await askOR({ force: true });
+  assert.equal(res.status, 429);
+  assert.match((await res.json()).error, /50 Anfragen pro Tag.*ca\. 24 Minuten/);
+  orReplies.push({ status: 404, body: { error: { code: 404, message: 'No endpoints found that support the requested parameters' } } });
+  res = await askOR({ force: true, model: 'irgendein/modell:free' });
+  assert.match((await res.json()).error, /keine strukturierte Ausgabe/);
+  orReplies.push({ status: 401, body: { error: { code: 401, message: 'No auth credentials found' } } });
+  res = await askOR({ force: true });
+  assert.match((await res.json()).error, /OpenRouter-Schlüssel ist ungültig/);
+});
+
+await test('OpenRouter: Fehler im Antwort-Body (Status 200) und kaputtes JSON', async () => {
+  orReplies.push({ body: { error: { code: 502, message: 'Provider returned error' } } });
+  let res = await askOR({ force: true });
+  assert.equal(res.status, 502);
+  assert.match((await res.json()).error, /Provider returned error/);
+  orReplies.push(orOk('Hier sind die Daten: Öl 10W-40'));
+  res = await askOR({ force: true });
   assert.match((await res.json()).error, /ungültige Daten/);
 });
 

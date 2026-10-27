@@ -4,7 +4,7 @@
 // sonst bekommen installierte Apps die neuen Dateien nicht. Die App zeigt dann
 // den Hinweis „Neue Version verfügbar".
 
-const VERSION = 'v8';
+const VERSION = 'v9';
 const CACHE = `motorrad-${VERSION}`;
 
 // Eigene App-Dateien (relativ, damit es auch unter https://name.github.io/repo/ klappt)

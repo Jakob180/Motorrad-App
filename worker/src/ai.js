@@ -1,5 +1,7 @@
 // ai.js – KI-Recherche der Wartungsdaten eines Motorrads (Öl, Filter, Reifen, Kette …).
-// Zwei Anbieter:
+// Drei Anbieter:
+//   openrouter – Standard: openrouter/free (zufälliges Gratis-Modell) oder ein gewähltes Modell,
+//                Websuche optional (kostet OpenRouter-Guthaben); Schlüssel kommt aus der App
 //   groq      – openai/gpt-oss-120b (bei Limit gpt-oss-20b) mit eingebauter Browser-Suche
 //               (Groq-Schlüssel kommt aus der App)
 //   anthropic – Claude mit Websuche (Schlüssel aus der App oder als Worker-Secret ANTHROPIC_API_KEY)
@@ -10,6 +12,8 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const MODEL = 'claude-opus-5-5';
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+export const OPENROUTER_DEFAULT_MODEL = 'openrouter/free';
 // Groq zählt die Gratis-Limits pro Modell: ist eines aufgebraucht, wird das andere versucht.
 // Recherche zuerst mit dem großen Modell, das Übertragen ins JSON zuerst mit dem kleinen
 // (spart das knappe Kontingent des großen Modells).
@@ -266,20 +270,108 @@ async function askGroq(apiKey, bike) {
   return { ...sanitize(input, found), model };
 }
 
+// ---------- OpenRouter ----------
+
+const OPENROUTER_SYSTEM = (web) => `${SYSTEM.split('\n')[0]}
+${web
+    ? 'Nutze die mitgelieferten Suchergebnisse und prüfe Modell und Baujahr genau – Füllmengen und Teilenummern ändern sich zwischen Modelljahren.'
+    : 'Du hast keine Websuche – antworte aus deinem Wissen und sei bei Teilenummern und Füllmengen besonders vorsichtig.'}
+Antworte ausschließlich mit JSON im vorgegebenen Schema: kurz, auf Deutsch, metrische Einheiten, Dezimalkomma.
+Lass ein Feld leer (""), wenn es nicht zutrifft oder du es nicht verlässlich weißt – lieber leer als geraten.
+Zweitakter haben kein Motoröl im üblichen Sinn, sondern Getriebeöl und Zweitaktöl.
+confidence: hoch nur bei Herstellerangaben${web ? '' : ' (ohne Websuche höchstens "mittel")'}. sources: verwendete URLs (sonst leer).`;
+
+/** OpenRouter-Fehler in verständliche Meldungen übersetzen */
+function openRouterError(status, message, retryAfter, web) {
+  if (status === 401) return new AiError('Der OpenRouter-Schlüssel ist ungültig – bitte in den Einstellungen prüfen.', 400);
+  if (status === 402) {
+    return new AiError(web
+      ? 'Für die Websuche braucht OpenRouter Guthaben – Websuche in den Einstellungen ausschalten oder Guthaben aufladen.'
+      : 'Kein OpenRouter-Guthaben für dieses Modell – „openrouter/free" wählen oder Guthaben aufladen.', 402);
+  }
+  if (status === 429) {
+    const minutes = Math.ceil(Number(retryAfter) / 60);
+    const wait = Number.isFinite(minutes) && minutes > 0 ? ` – wieder möglich in ca. ${minutes} Minuten` : ' – bitte später nochmal';
+    return new AiError(`OpenRouter-Limit erreicht (Gratis: 50 Anfragen pro Tag, mit Guthaben mehr)${wait}.`, 429);
+  }
+  if (status === 404 || /no endpoints/i.test(message)) {
+    return new AiError('Dieses Modell kann keine strukturierte Ausgabe – bitte „openrouter/free" oder ein anderes Modell wählen.', 400);
+  }
+  return new AiError(`OpenRouter meldet einen Fehler (${status}): ${clean(message, 150)}`, 502);
+}
+
+/** JSON aus der Antwort lesen (manche Modelle setzen es in ```json … ```) */
+function parseJsonContent(text) {
+  const raw = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim();
+  return JSON.parse(raw);
+}
+
+/** OpenRouter: ein Aufruf mit strikter JSON-Ausgabe, Websuche optional (Plugin "web") */
+async function askOpenRouter(apiKey, bike, { model = OPENROUTER_DEFAULT_MODEL, web = false }) {
+  let res;
+  try {
+    res = await fetch(OPENROUTER_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'X-Title': 'Motorrad-Begleiter', // Anzeige im OpenRouter-Dashboard
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: OPENROUTER_SYSTEM(web) },
+          { role: 'user', content: `Motorrad: ${describe(bike)}. Ermittle die Wartungsdaten.` },
+        ],
+        response_format: {
+          type: 'json_schema',
+          json_schema: { name: 'wartungsdaten', strict: true, schema: SUBMIT_TOOL.input_schema },
+        },
+        // nur Anbieter verwenden, die die strukturierte Ausgabe auch wirklich können
+        provider: { require_parameters: true },
+        ...(web ? { plugins: [{ id: 'web', engine: 'exa', max_results: 5 }] } : {}),
+        max_tokens: 4000,
+      }),
+    });
+  } catch {
+    throw new AiError('OpenRouter ist nicht erreichbar.', 502);
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) {
+    throw openRouterError(res.ok ? Number(data.error?.code) || 502 : res.status, data.error?.message || '', res.headers.get('retry-after'), web);
+  }
+  const message = data.choices?.[0]?.message || {};
+  let input;
+  try {
+    input = parseJsonContent(message.content);
+  } catch {
+    throw new AiError('Das Modell hat ungültige Daten geliefert – bitte nochmal versuchen.', 502);
+  }
+  // Quellen der Websuche (Annotationen) als Ersatz, falls das Modell selbst keine nennt
+  const found = (message.annotations || [])
+    .filter((a) => a.type === 'url_citation' && a.url_citation?.url)
+    .map((a) => ({ title: a.url_citation.title || a.url_citation.url, url: a.url_citation.url }));
+  return { ...sanitize(input, found), model: data.model || model };
+}
+
 /**
  * Wartungsdaten für ein Motorrad: aus dem Cache oder frisch recherchiert.
  * bike: { brand, model, year, meter }   force: Cache ignorieren (zählt zum Tageslimit)
- * provider: 'groq' | 'anthropic'   apiKey: Schlüssel aus der App (optional bei anthropic)
+ * provider: 'openrouter' | 'groq' | 'anthropic'   apiKey: Schlüssel aus der App (optional bei anthropic)
+ * options: { model, web } – nur OpenRouter
  */
-export async function lookupSpecs(env, bike, { force = false, today, provider = 'anthropic', apiKey = '' }) {
-  const useGroq = provider === 'groq';
-  const key = useGroq ? apiKey : (apiKey || env.ANTHROPIC_API_KEY);
+export async function lookupSpecs(env, bike, { force = false, today, provider = 'anthropic', apiKey = '', options = {} }) {
+  const names = { openrouter: 'OpenRouter', groq: 'Groq' };
+  const key = provider === 'anthropic' ? (apiKey || env.ANTHROPIC_API_KEY) : apiKey;
   if (!key) {
-    throw useGroq
-      ? new AiError('Bitte zuerst deinen Groq-Schlüssel in den Einstellungen eintragen.', 400)
-      : new AiError('Kein Claude-Schlüssel: in der App eintragen oder ANTHROPIC_API_KEY im Worker setzen – siehe README.', 503);
+    throw provider === 'anthropic'
+      ? new AiError('Kein Claude-Schlüssel: in der App eintragen oder ANTHROPIC_API_KEY im Worker setzen – siehe README.', 503)
+      : new AiError(`Bitte zuerst deinen ${names[provider]}-Schlüssel in den Einstellungen eintragen.`, 400);
   }
-  const cacheKey = `ai:specs:${useGroq ? 'groq' : 'claude'}|${norm(bike.brand)}|${norm(bike.model)}|${bike.year || ''}|${bike.meter === 'h' ? 'h' : 'km'}`;
+  const variant = provider === 'openrouter'
+    ? `openrouter:${options.model || OPENROUTER_DEFAULT_MODEL}:${options.web ? 'web' : 'ohne'}`
+    : provider === 'groq' ? 'groq' : 'claude';
+  const cacheKey = `ai:specs:${variant}|${norm(bike.brand)}|${norm(bike.model)}|${bike.year || ''}|${bike.meter === 'h' ? 'h' : 'km'}`;
   if (!force) {
     const cached = await env.PUSH_KV.get(cacheKey, 'json');
     if (cached) return { ...cached, cached: true };
@@ -294,7 +386,9 @@ export async function lookupSpecs(env, bike, { force = false, today, provider = 
 
   let result;
   try {
-    result = useGroq ? await askGroq(key, bike) : await askClaude(key, bike);
+    if (provider === 'openrouter') result = await askOpenRouter(key, bike, options);
+    else if (provider === 'groq') result = await askGroq(key, bike);
+    else result = await askClaude(key, bike);
   } catch (err) {
     if (err instanceof AiError) throw err;
     if (err instanceof Anthropic.AuthenticationError) throw new AiError('Der Claude-API-Schlüssel ist ungültig.', 502);
