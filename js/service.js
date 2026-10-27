@@ -15,6 +15,7 @@ import {
   field, parseDecimal, setFieldError, clearFieldErrors, openSheet, confirmDialog, toast, downloadFile,
   canShareFiles, ICONS,
 } from './ui.js';
+import { openSpecsForm, openPartsSheet, specsSummary } from './specs.js';
 
 const hasAny = (list, values) => (list || []).some((v) => values.includes(v));
 
@@ -417,6 +418,15 @@ async function render() {
         er kommt automatisch aus dem Logbuch oder du trägst ihn hier ein.</p>
     </div>`;
 
+  // Wartungsdaten (Öl, Filter, Reifen …) – Basis für „🛒 Teile"
+  const summary = specsSummary(bike);
+  html += `<div class="card">
+      <div class="card-head"><h3>📋 Wartungsdaten</h3>
+        <button type="button" class="btn btn-sm" data-action="specs">${summary ? 'Öffnen' : 'Eintragen'}</button></div>
+      ${summary || `<p class="muted small">Noch leer. Öl, Filter, Reifen &amp; Co. aus dem Handbuch eintragen –
+        oder per KI recherchieren lassen. Dann zeigt „🛒 Teile" bei jeder Wartung, was du kaufen musst.</p>`}
+    </div>`;
+
   // Pickerl
   html += `<div class="card svc s-${pick ? pick.status : 'unknown'}">
       <div class="svc-head"><span class="svc-ico" aria-hidden="true">🔖</span>
@@ -459,6 +469,7 @@ async function render() {
         <p class="muted small">${[every, last, est].filter(Boolean).map(esc).join(' · ')}</p>
         <div class="row">
           <button type="button" class="btn btn-sm btn-primary" data-action="done" data-id="${esc(iv.id)}">${ICONS.check} Erledigt</button>
+          <button type="button" class="btn btn-sm" data-action="parts" data-id="${esc(iv.id)}">🛒 Teile</button>
           <button type="button" class="btn btn-sm" data-action="ics" data-id="${esc(iv.id)}">📅 Kalender</button>
           <button type="button" class="btn btn-sm" data-action="edit" data-id="${esc(iv.id)}" aria-label="Intervall bearbeiten">${ICONS.edit}</button>
         </div>
@@ -493,6 +504,12 @@ async function onClick(e) {
       break;
     case 'ics':
       if (s) intervalToCalendar(bike, s);
+      break;
+    case 'parts':
+      if (s) openPartsSheet(bike, s.iv.task, `Teile für ${s.iv.name}`, s.iv.name);
+      break;
+    case 'specs':
+      openSpecsForm(bike);
       break;
     case 'suggest':
       openSuggestions(bike);

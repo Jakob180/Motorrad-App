@@ -572,6 +572,7 @@ function renderGarage() {
       <div class="row mt">
         ${isActive ? '' : `<button type="button" class="btn btn-sm btn-primary" data-action="activate-bike" data-id="${esc(b.id)}">${ICONS.check} Aktiv setzen</button>`}
         <button type="button" class="btn btn-sm" data-action="edit-bike" data-id="${esc(b.id)}">${ICONS.edit} Bearbeiten</button>
+        <button type="button" class="btn btn-sm" data-action="bike-specs" data-id="${esc(b.id)}">📋 Wartungsdaten</button>
       </div>
     </div>`;
   }).join('');
@@ -648,6 +649,12 @@ async function onClick(e) {
     case 'edit-bike':
       openBikeForm(ctx.bikes.find((b) => b.id === id));
       break;
+    case 'bike-specs': {
+      // dynamisch geladen: specs.js nutzt selbst Funktionen aus diesem Modul
+      const { openSpecsForm } = await import('./specs.js');
+      openSpecsForm(ctx.bikes.find((b) => b.id === id));
+      break;
+    }
     case 'activate-bike':
       await setActiveBike(id);
       toast('Aktives Motorrad gewechselt', 'ok');

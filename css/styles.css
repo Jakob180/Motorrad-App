@@ -873,6 +873,35 @@ details.card summary { min-height: 32px; font-weight: 700; cursor: pointer; }
 .ride-hints { margin-bottom: 14px; }
 .ride-hints ul { margin: 6px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
 
+/* ---------- Wartungsdaten & Teile ---------- */
+
+.ai-box { margin-bottom: 8px; padding: 14px; border: 1px dashed var(--border); border-radius: 14px; background: var(--surface-2); }
+.ai-box .notice { margin: 12px 0 0; }
+.ai-info a { color: var(--accent); }
+.field input.ai-filled { border-color: var(--green); box-shadow: 0 0 0 2px var(--green-soft); }
+.ai-hint { margin: -8px 0 14px; padding: 8px 12px; border-radius: 10px; background: var(--yellow-soft); font-size: 14px; }
+.ai-hint .btn { min-height: 36px; padding: 0 10px; }
+
+.part { margin-bottom: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-2); }
+.part-head { color: var(--text-dim); font-size: 14px; font-weight: 700; }
+.part-val { margin: 2px 0 8px; font-size: 18px; font-weight: 700; }
+.shop-row { margin-top: 8px; }
+.shop-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.shop-btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 650;
+  text-decoration: none;
+}
+.shop-btn:active { background: var(--surface-3); }
+
 /* ---------- Toasts ---------- */
 
 .toasts {

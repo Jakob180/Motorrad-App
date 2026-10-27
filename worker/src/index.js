@@ -6,12 +6,14 @@
 //   DELETE /api/device/:id            Gerät abmelden
 //   POST   /api/device/:id/test       Test-Nachricht senden
 //   POST   /api/device/:id/run        Morgen-Nachricht sofort erzeugen (zum Testen)
+//   POST   /api/ai/specs              Wartungsdaten eines Motorrads per KI recherchieren (ai.js)
 //
 // Cron: läuft stündlich (UTC). Für jedes Gerät wird geprüft, ob in Europe/Vienna gerade die
 // gewünschte Uhrzeit ist – so stimmt die Zeit auch bei Sommer-/Winterzeit.
 
 import { LEVELS, rateHours, summarizeDay } from '../../js/ampel.js';
 import { sendPush } from './webpush.js';
+import { lookupSpecs, AiError } from './ai.js';
 
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const DEVICE_PREFIX = 'dev:';
@@ -270,7 +272,7 @@ async function handle(request, env) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
   if (url.pathname === '/' || url.pathname === '/api/health') {
     const ready = Boolean(env.APP_TOKEN && env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY && env.PUSH_KV);
-    return json({ ok: true, service: 'Motorrad-Begleiter Push-Server', ready }, 200, cors);
+    return json({ ok: true, service: 'Motorrad-Begleiter Push-Server', ready, ai: Boolean(env.ANTHROPIC_API_KEY) }, 200, cors);
   }
   if (!env.APP_TOKEN || !env.VAPID_PRIVATE_KEY) {
     return json({ error: 'Server ist noch nicht eingerichtet (Secrets fehlen) – siehe README.' }, 500, cors);
@@ -279,6 +281,33 @@ async function handle(request, env) {
 
   if (url.pathname === '/api/vapid-public-key' && request.method === 'GET') {
     return json({ key: env.VAPID_PUBLIC_KEY }, 200, cors);
+  }
+
+  if (url.pathname === '/api/ai/specs' && request.method === 'POST') {
+    let body;
+    try {
+      body = JSON.parse(await request.text());
+    } catch {
+      return json({ error: 'Ungültige Anfrage' }, 400, cors);
+    }
+    const str = (v) => (typeof v === 'string' ? v.trim().slice(0, 60) : '');
+    const bike = {
+      brand: str(body.brand),
+      model: str(body.model),
+      year: Number.isInteger(body.year) ? body.year : null,
+      meter: body.meter === 'h' ? 'h' : 'km',
+    };
+    if (!bike.brand || !bike.model) return json({ error: 'Bitte Marke und Modell angeben.' }, 400, cors);
+    try {
+      const result = await lookupSpecs(env, bike, {
+        force: body.force === true,
+        today: localNow(env.TIMEZONE || 'Europe/Vienna').date,
+      });
+      return json(result, 200, cors);
+    } catch (err) {
+      if (err instanceof AiError) return json({ error: err.message }, err.status, cors);
+      throw err;
+    }
   }
 
   const m = url.pathname.match(/^\/api\/device\/([A-Za-z0-9-]{8,64})(\/(test|run))?$/);

@@ -51,9 +51,9 @@ async function savePushConfig(patch) {
 
 // ---------- Server-Aufrufe ----------
 
-async function api(cfg, method, path, body) {
+async function api(cfg, method, path, body, timeout = 15000) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15000);
+  const timer = setTimeout(() => ctrl.abort(), timeout);
   try {
     const res = await fetch(cfg.workerUrl.replace(/\/+$/, '') + path, {
       method,
@@ -74,6 +74,15 @@ async function api(cfg, method, path, body) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Aufruf an den Worker mit der gespeicherten Adresse/Token (z. B. für die KI-Wartungsdaten) */
+export async function workerRequest(method, path, body, { timeout = 15000 } = {}) {
+  const cfg = await getPushConfig();
+  if (!cfg.workerUrl || !cfg.token) {
+    throw new Error('Dafür braucht die App deinen Server: Einstellungen → Benachrichtigungen → Server-Adresse und Token eintragen.');
+  }
+  return api(cfg, method, path, body, timeout);
 }
 
 function b64urlToBytes(str) {

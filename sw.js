@@ -4,7 +4,7 @@
 // sonst bekommen installierte Apps die neuen Dateien nicht. Die App zeigt dann
 // den Hinweis „Neue Version verfügbar".
 
-const VERSION = 'v6';
+const VERSION = 'v7';
 const CACHE = `motorrad-${VERSION}`;
 
 // Eigene App-Dateien (relativ, damit es auch unter https://name.github.io/repo/ klappt)
@@ -23,6 +23,7 @@ const APP_FILES = [
   './js/route.js',
   './js/service.js',
   './js/push.js',
+  './js/specs.js',
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',

@@ -33,11 +33,13 @@ js/logbook.js       Logbuch: Motorräder, Einträge, Verbrauch, Statistik, Diagr
 js/service.js       Service: Intervalle, Pickerl, Fälligkeiten, Hinweise, Kalender-Export (.ics)
 js/settings.js      Einstellungen: Ampel-Grenzwerte, Wohnort, Benachrichtigungen, Backup, Updates
 js/push.js          Push: Erlaubnis, Web-Push-Abo, Abgleich mit dem Worker
+js/specs.js         Wartungsdaten pro Motorrad, KI-Ausfüllen, „🛒 Teile" mit Einkaufs-Links
 
 worker/             Push-Server (Cloudflare Worker) – wird NICHT über GitHub Pages ausgeliefert
   wrangler.toml     Worker-Konfiguration (KV, Cron, erlaubte Adressen)
   src/index.js      API, stündlicher Cron, Morgen-Nachricht (nutzt js/ampel.js mit)
   src/webpush.js    Web-Push-Verschlüsselung (RFC 8291) und VAPID – ohne externe Bibliothek
+  src/ai.js         KI-Recherche der Wartungsdaten (Claude + Websuche), Cache, Tageslimit
   scripts/setup.mjs erzeugt VAPID-Schlüssel + Token und speichert sie als Secrets
   test/             Tests (npm test) – laufen ohne Cloudflare-Konto
 ```
@@ -235,6 +237,51 @@ die offiziellen Testwerte aus RFC 8291, Token-Schutz, Cron-Zeiten mit Sommer-/Wi
 **Sicherheit & Datenschutz:** Jeder Aufruf braucht den Token, der Worker nimmt nur Anfragen von
 deiner App-Adresse an (CORS) und speichert nur: Push-Abo, Wohnort, Ampel-Grenzwerte und die Liste
 der Fälligkeiten. Server-Adresse und Token stehen nur auf dem Gerät und **nicht** im Backup.
+
+## Wartungsdaten, Teile & KI
+
+Pro Motorrad gibt es **📋 Wartungsdaten** (Garage → Motorrad → „Wartungsdaten" oder im Service-Tab):
+Motoröl, Ölmenge, Ölfilter, Getriebe-/Zweitaktöl, Luftfilter, Zündkerze, Kühlmittel, Batterie, Kette,
+Ritzel, Reifen, Reifendruck, Bremsflüssigkeit und -beläge.
+
+- **🛒 Teile** bei jedem Service-Intervall zeigt, was du für genau diese Wartung brauchst (z. B. beim
+  Ölwechsel Öl + Filter, beim Kette-Schmieren Kettenspray), inkl. „zuletzt verwendet" aus dem Logbuch
+  und Such-Links zu **Louis, Polo, Amazon** und einem **Preisvergleich**. Gekauft wird im Shop selbst.
+- **✨ Mit KI ausfüllen** lässt Claude die Daten im Web recherchieren (Herstellerangaben, Handbücher).
+  Leere Felder werden ausgefüllt, abweichende Werte nur als Vorschlag zum Übernehmen angezeigt,
+  mit Quellen und Einschätzung der Sicherheit. **Immer mit dem Handbuch abgleichen** – falsches Öl
+  (z. B. Autoöl bei Nasskupplung) kann teuer werden.
+
+### KI einrichten (einmalig)
+
+Die Anfrage läuft über deinen Worker, damit der API-Schlüssel nie in der App steht.
+
+1. Auf [console.anthropic.com](https://console.anthropic.com) ein Konto anlegen, unter **Billing**
+   etwas Guthaben aufladen (z. B. 5 $) und unter **API Keys** einen Schlüssel erstellen.
+2. Im Ordner `worker`:
+
+   ```bash
+   npx wrangler secret put ANTHROPIC_API_KEY
+   ```
+
+   (Schlüssel einfügen, Enter.) Danach den Worker neu hochladen:
+
+   ```bash
+   npx wrangler deploy
+   ```
+
+3. Prüfen: Die Worker-Adresse im Browser zeigt jetzt `"ai":true`.
+
+In der App braucht es dieselbe Server-Adresse und denselben Token wie für die Benachrichtigungen.
+
+**Kosten:** Verwendet wird Claude Opus 5.5 ($4 / $20 pro 1 Mio. Ein-/Ausgabe-Token) mit Websuche
+($10 pro 1.000 Suchen, max. 5 pro Recherche). Eine Recherche kostet grob **10–40 Cent**. Ergebnisse
+werden pro Modell **30 Tage** im Worker gespeichert – erneutes Öffnen kostet nichts. Ein **Tageslimit**
+von 20 Recherchen schützt vor Überraschungen (anpassbar über `AI_DAILY_LIMIT` in `wrangler.toml`
+unter `[vars]`). Lehnt das Modell eine Anfrage ab, übernimmt automatisch ein Ersatzmodell
+(serverseitiges Fallback der API).
+
+**Datenschutz:** An Anthropic gehen nur Marke, Modell, Baujahr und ob nach km oder Bh gewartet wird.
 
 ## Lokal testen
 

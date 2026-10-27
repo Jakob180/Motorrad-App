@@ -106,10 +106,17 @@ const env = {
 const browser = await fakeBrowser('https://push.example.test/abo/123');
 const pushes = [];          // beim Push-Dienst angekommene Nachrichten (entschlüsselt)
 let pushStatus = 201;       // Antwort des Push-Dienstes
+const claudeCalls = [];     // Anfragen an die Claude-API
+const claudeReplies = [];   // vorbereitete Antworten der Claude-API (Warteschlange)
 
 globalThis.fetch = async (input, init = {}) => {
   const url = String(input);
   if (url.startsWith('https://api.open-meteo.com/')) return new Response(JSON.stringify(fakeForecast()));
+  if (url.startsWith('https://api.anthropic.com/')) {
+    claudeCalls.push({ url, headers: new Headers(init.headers), body: JSON.parse(init.body) });
+    const { status = 200, body } = claudeReplies.shift();
+    return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  }
   if (url.startsWith('https://push.example.test/')) {
     // VAPID-Header prüfen wie ein echter Push-Dienst
     const m = /^vapid t=([^,]+), k=(.+)$/.exec(init.headers.Authorization);
@@ -243,6 +250,85 @@ await test('Abo abgelaufen (410) → Gerät wird gelöscht', async () => {
   assert.equal(res.gone, true);
   assert.equal(env.PUSH_KV.map.has(`dev:${deviceId}`), false);
   pushStatus = 201;
+});
+
+// ---------- KI: Wartungsdaten ----------
+
+const specsInput = {
+  engineOil: '', oilAmount: '', oilFilter: '', gearOil: 'SAE 10W-40, 0,8 l', twoStrokeOil: 'vollsynthetisch, Öltank (Ölpumpe)',
+  airFilter: 'Twin Air 158112', sparkPlug: 'NGK BR7ES', chain: '520, 118 Glieder', sprockets: '14/50',
+  tireFront: '90/90-21', tireRear: '140/80-18', tirePressure: 'Gelände 1,0 / 1,0 bar', brakeFluid: 'DOT 4',
+  brakePadsFront: '', brakePadsRear: '', coolant: 'Motorex Coolant M3.0, 1,2 l', battery: 'YTZ7S',
+  confidence: 'mittel', notes: 'Getriebeöl-Menge laut Handbuch prüfen.',
+  sources: [{ title: 'Husqvarna Bedienungsanleitung TE 300', url: 'https://www.husqvarna-motorcycles.com/de/handbuch' }],
+};
+const msg = (content, stop_reason) => ({
+  id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-opus-5-5', content, stop_reason,
+  usage: { input_tokens: 100, output_tokens: 50 },
+});
+const searchResult = { type: 'web_search_tool_result', tool_use_id: 'srv_1', content: [{ type: 'web_search_result', title: 'Forum', url: 'https://forum.example/te300' }] };
+const submit = { type: 'tool_use', id: 'tu_1', name: 'submit_specs', input: specsInput };
+const askSpecs = (extra = {}) => call('POST', '/api/ai/specs', { brand: 'Husqvarna', model: 'TE 300', year: 2023, meter: 'h', ...extra });
+
+await test('KI ohne API-Schlüssel: verständliche Meldung (503)', async () => {
+  const res = await askSpecs();
+  assert.equal(res.status, 503);
+  assert.match((await res.json()).error, /ANTHROPIC_API_KEY/);
+});
+
+await test('KI-Anfrage: richtiges Modell, Websuche, striktes Werkzeug, Fallback', async () => {
+  env.ANTHROPIC_API_KEY = 'sk-test';
+  claudeReplies.push({ body: msg([searchResult, submit], 'tool_use') });
+  const res = await askSpecs();
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.cached, false);
+  assert.equal(data.specs.gearOil, 'SAE 10W-40, 0,8 l');
+  assert.equal(data.specs.engineOil, '');
+  assert.equal(data.confidence, 'mittel');
+  assert.equal(data.sources[0].url, 'https://www.husqvarna-motorcycles.com/de/handbuch');
+  const req = claudeCalls.at(-1);
+  assert.equal(req.body.model, 'claude-opus-5-5');
+  assert.equal(req.body.fallbacks, 'default');
+  assert.match(req.headers.get('anthropic-beta'), /server-side-fallback-2026-07-01/);
+  // SDK 1.x sendet den Schlüssel als Bearer-Token (ältere Versionen als x-api-key)
+  assert.ok(req.headers.get('authorization') === 'Bearer sk-test' || req.headers.get('x-api-key') === 'sk-test');
+  assert.ok(req.body.tools.some((t) => t.type === 'web_search_20260209'));
+  const tool = req.body.tools.find((t) => t.name === 'submit_specs');
+  assert.equal(tool.strict, true);
+  assert.match(req.body.messages[0].content, /Husqvarna TE 300, Baujahr 2023 \(wird nach Betriebsstunden gewartet/);
+});
+
+await test('KI: zweite Anfrage kommt aus dem Cache (keine Kosten)', async () => {
+  const before = claudeCalls.length;
+  const data = await (await askSpecs()).json();
+  assert.equal(data.cached, true);
+  assert.equal(claudeCalls.length, before);
+});
+
+await test('KI: pausierte Websuche (pause_turn) wird fortgesetzt', async () => {
+  claudeReplies.push({ body: msg([searchResult], 'pause_turn') }, { body: msg([submit], 'tool_use') });
+  const before = claudeCalls.length;
+  const data = await (await askSpecs({ force: true })).json();
+  assert.equal(claudeCalls.length - before, 2);
+  assert.equal(data.specs.battery, 'YTZ7S');
+  assert.equal(claudeCalls.at(-1).body.messages[1].role, 'assistant');
+});
+
+await test('KI: ungültiger API-Schlüssel → klare Fehlermeldung', async () => {
+  claudeReplies.push({ status: 401, body: { type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } } });
+  const res = await askSpecs({ force: true });
+  assert.equal(res.status, 502);
+  assert.match((await res.json()).error, /API-Schlüssel im Worker ist ungültig/);
+});
+
+await test('KI: Tageslimit schützt vor Kosten', async () => {
+  env.AI_DAILY_LIMIT = '3'; // 3 Abfragen heute schon verbraucht (oben)
+  const before = claudeCalls.length;
+  const res = await askSpecs({ force: true });
+  assert.equal(res.status, 429);
+  assert.match((await res.json()).error, /Tageslimit von 3/);
+  assert.equal(claudeCalls.length, before);
 });
 
 console.log(`\n${passed} Tests bestanden${process.exitCode ? ' – es gab Fehler!' : '.'}`);
