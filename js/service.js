@@ -75,7 +75,7 @@ const MONTH_OPTIONS = [1, 2, 3, 4, 6, 9, 12, 18, 24, 36, 48];
 const MONTH_NAMES = ['Jänner', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September',
   'Oktober', 'November', 'Dezember'];
 const SOON_DAYS = 30;       // „bald fällig" ab 30 Tagen vorher …
-const SOON_SHARE = 0.1;     // … bzw. bei den letzten 10 % der Strecke/Stunden
+export const SOON_SHARE = 0.1;     // … bzw. bei den letzten 10 % der Strecke/Stunden
 
 // ======================================================================
 // Berechnungen
@@ -204,21 +204,21 @@ export function pickerlStatus(bike, now = new Date()) {
   const label = fmtMonthYear(due);
 
   if (today > graceEnd) {
-    return { status: 'overdue', due, windowStart, graceEnd, text: 'Abgelaufen!',
+    return { status: 'overdue', due, dueEnd, windowStart, graceEnd, text: 'Abgelaufen!',
       detail: `Die Toleranzfrist endete am ${fmtDate(graceEnd)}. Ohne gültiges Pickerl nicht fahren.` };
   }
   if (today > dueEnd) {
-    return { status: 'overdue', due, windowStart, graceEnd, text: 'Toleranzfrist läuft',
+    return { status: 'overdue', due, dueEnd, windowStart, graceEnd, text: 'Toleranzfrist läuft',
       detail: `Gelocht war ${label}. Spätestens bis ${fmtDate(graceEnd)} (${fmtInDays(daysBetween(today, graceEnd))}) begutachten lassen.` };
   }
   if (today >= windowStart) {
-    return { status: 'soon', due, windowStart, graceEnd, text: `Jetzt fällig (${label})`,
+    return { status: 'soon', due, dueEnd, windowStart, graceEnd, text: `Jetzt fällig (${label})`,
       detail: `Begutachtung möglich seit ${fmtDate(windowStart)}, Toleranz bis ${fmtDate(graceEnd)}.` };
   }
   const toWindow = daysBetween(today, windowStart);
   return {
     status: toWindow <= SOON_DAYS ? 'soon' : 'ok',
-    due, windowStart, graceEnd,
+    due, dueEnd, windowStart, graceEnd,
     text: `Fällig im ${label}`,
     detail: `Begutachtung möglich ab ${fmtDate(windowStart)} (${fmtInDays(toWindow)}), Toleranz bis ${fmtDate(graceEnd)}.`,
   };

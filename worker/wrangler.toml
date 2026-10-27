@@ -1,0 +1,27 @@
+# Cloudflare-Worker für die Push-Benachrichtigungen des Motorrad-Begleiters.
+# Einrichtung Schritt für Schritt: siehe README.md im Hauptordner („Push-Benachrichtigungen").
+
+name = "motorrad-push"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+# Stündlich (Cron läuft in UTC). Der Worker prüft selbst, ob es in Wien gerade die
+# eingestellte Uhrzeit ist – dadurch passt es automatisch bei Sommer- und Winterzeit.
+[triggers]
+crons = ["0 * * * *"]
+
+# Speicher für Push-Abos und Einstellungen.
+# Die id bekommst du mit:  npx wrangler kv namespace create PUSH_KV
+[[kv_namespaces]]
+binding = "PUSH_KV"
+id = "f1757c52a4ab4dba9dd4af7e696117bf"
+
+[vars]
+# Adressen, von denen die App den Worker aufrufen darf (ohne Pfad, durch Komma getrennt)
+ALLOWED_ORIGINS = "https://jakob180.github.io,http://localhost:8080"
+# Kennung des Absenders für die Push-Dienste (Apple/Google) – eine https-Adresse oder mailto:
+VAPID_SUBJECT = "https://jakob180.github.io/Motorrad-App/"
+TIMEZONE = "Europe/Vienna"
+
+# Geheime Werte (NICHT hier eintragen!) werden mit  npm run setup  als Secrets gespeichert:
+#   VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, APP_TOKEN

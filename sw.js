@@ -4,7 +4,7 @@
 // sonst bekommen installierte Apps die neuen Dateien nicht. Die App zeigt dann
 // den Hinweis „Neue Version verfügbar".
 
-const VERSION = 'v5';
+const VERSION = 'v6';
 const CACHE = `motorrad-${VERSION}`;
 
 // Eigene App-Dateien (relativ, damit es auch unter https://name.github.io/repo/ klappt)
@@ -22,6 +22,7 @@ const APP_FILES = [
   './js/ampel.js',
   './js/route.js',
   './js/service.js',
+  './js/push.js',
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -58,6 +59,43 @@ self.addEventListener('message', (event) => {
   const type = event.data?.type;
   if (type === 'SKIP_WAITING') self.skipWaiting();
   if (type === 'GET_VERSION') event.ports[0]?.postMessage({ version: VERSION });
+});
+
+// ---------- Push-Benachrichtigungen (vom Cloudflare Worker) ----------
+
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { body: event.data?.text() || '' };
+  }
+  // iOS verlangt, dass zu jeder Push-Nachricht eine Benachrichtigung angezeigt wird
+  event.waitUntil(self.registration.showNotification(data.title || 'Motorrad-Begleiter', {
+    body: data.body || '',
+    icon: './icons/icon-192.png',
+    badge: './icons/icon-192.png',
+    tag: data.tag || undefined,
+    lang: 'de-AT',
+    data: { tab: data.tab || 'wetter' },
+  }));
+});
+
+// Tipp auf die Benachrichtigung → App öffnen und passenden Tab zeigen
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const tab = event.notification.data?.tab || 'wetter';
+  const url = new URL(`./#${tab}`, self.registration.scope).href;
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const app = windows.find((c) => c.url.startsWith(self.registration.scope));
+    if (app) {
+      await app.focus();
+      app.postMessage({ type: 'OPEN_TAB', tab });
+      return;
+    }
+    await self.clients.openWindow(url);
+  })());
 });
 
 self.addEventListener('fetch', (event) => {

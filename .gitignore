@@ -1,6 +1,11 @@
 # Lokale Werkzeug-Einstellungen (nicht veröffentlichen)
 .claude/
 
+# Cloudflare Worker: Abhängigkeiten, lokaler Zustand, lokale Secrets
+worker/node_modules/
+worker/.wrangler/
+worker/.dev.vars
+
 # Betriebssystem
 Thumbs.db
 .DS_Store

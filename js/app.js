@@ -5,6 +5,7 @@ import * as db from './db.js';
 import { $, $$, esc, setBanner, toast, daysBetween, toISODate, ICONS } from './ui.js';
 import { getActiveBike, getBikes, openBikePicker } from './logbook.js';
 import { dueOverview } from './service.js';
+import { initPush } from './push.js';
 
 // Start-Tab beim Öffnen der App
 const DEFAULT_TAB = 'wetter';
@@ -220,6 +221,7 @@ function start() {
   checkBackupReminder();
   checkServiceBanner();
   registerServiceWorker();
+  initPush();
   requestPersistentStorage();
   db.cachePrune();
 }

@@ -1,0 +1,17 @@
+{
+  "name": "motorrad-push",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Push-Server (Cloudflare Worker) für den Motorrad-Begleiter",
+  "type": "module",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "logs": "wrangler tail",
+    "test": "node test/worker.test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

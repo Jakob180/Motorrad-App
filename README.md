@@ -12,7 +12,7 @@ GitHub Pages und wird am iPhone über Safari → „Zum Home-Bildschirm" install
 | 2 | Wetter am Standort + Fahr-Ampel | ✅ fertig |
 | 3 | Wetter entlang einer Route (Karte, OSRM) | ✅ fertig |
 | 4 | Service-Intervalle, Pickerl, Erinnerungen, .ics-Export | ✅ fertig |
-| 5 | Push-Benachrichtigungen (Cloudflare Worker) | ⏳ |
+| 5 | Push-Benachrichtigungen (Cloudflare Worker) | ✅ fertig |
 
 ## Projektstruktur
 
@@ -31,7 +31,15 @@ js/ampel.js         Fahr-Ampel: Bewertung pro Stunde + Tagesfazit (ohne DOM, auc
 js/route.js         Wetter entlang einer Route: Karte, OSRM-Route, Wetterpunkte, beste Abfahrt, Favoriten
 js/logbook.js       Logbuch: Motorräder, Einträge, Verbrauch, Statistik, Diagramme
 js/service.js       Service: Intervalle, Pickerl, Fälligkeiten, Hinweise, Kalender-Export (.ics)
-js/settings.js      Einstellungen: Ampel-Grenzwerte, Wohnort, Backup, Speicher, Updates
+js/settings.js      Einstellungen: Ampel-Grenzwerte, Wohnort, Benachrichtigungen, Backup, Updates
+js/push.js          Push: Erlaubnis, Web-Push-Abo, Abgleich mit dem Worker
+
+worker/             Push-Server (Cloudflare Worker) – wird NICHT über GitHub Pages ausgeliefert
+  wrangler.toml     Worker-Konfiguration (KV, Cron, erlaubte Adressen)
+  src/index.js      API, stündlicher Cron, Morgen-Nachricht (nutzt js/ampel.js mit)
+  src/webpush.js    Web-Push-Verschlüsselung (RFC 8291) und VAPID – ohne externe Bibliothek
+  scripts/setup.mjs erzeugt VAPID-Schlüssel + Token und speichert sie als Secrets
+  test/             Tests (npm test) – laufen ohne Cloudflare-Konto
 ```
 
 Externe Bibliotheken werden per CDN geladen und vom Service Worker für den Offline-Betrieb
@@ -131,6 +139,100 @@ Im Tab **Service** (für das aktive Motorrad):
 - **📅 Kalender:** erzeugt eine `.ics`-Datei (ganztägiger Termin mit Erinnerung). Am iPhone erscheint
   die Termin-Vorschau → „Hinzufügen"; die Erinnerung kommt dann vom iPhone-Kalender. Klappt der
   Download in der installierten App nicht, über **Teilen …** versuchen oder die Seite in Safari öffnen.
+
+## Push-Benachrichtigungen (Cloudflare Worker)
+
+Jeden Morgen zur eingestellten Uhrzeit (Standard 7:00) schickt ein kleiner Server eine Nachricht:
+
+- **🟢 Fahrwetter am Wohnort** – nur bei gutem Wetter oder jeden Morgen (einstellbar), z. B.
+  *„Gutes Fahrwetter in Hallein – Ideal von 10–16 Uhr, ab 17 Uhr Regen · 8–17 °C"*
+- **🔧 Fällige Wartungen** und **🔖 Pickerl** – jede Erinnerung höchstens einmal pro Woche
+- Tippen auf die Nachricht öffnet direkt den passenden Tab der App.
+
+**So funktioniert es:** Die App schickt bei jeder Änderung (gebündelt) Push-Abo, Wohnort,
+Ampel-Grenzwerte und Fälligkeiten an den Worker, der sie in Cloudflare KV speichert. Ein Cron-Job
+läuft **stündlich** (Cron-Zeiten sind immer UTC); der Worker prüft selbst, ob es in
+**Europe/Vienna** gerade die gewünschte Uhrzeit ist – dadurch stimmt es automatisch bei Sommer-
+und Winterzeit. Das Wetter holt der Worker frisch von Open-Meteo und bewertet es mit derselben
+Ampel-Logik wie die App (`js/ampel.js`).
+
+**Voraussetzungen am iPhone:** iOS **16.4 oder neuer** und die App muss **über den
+Home-Bildschirm installiert** sein (in Safari allein gibt es keine Push-Nachrichten).
+
+### Einrichtung Schritt für Schritt (einmalig, ca. 15 Minuten)
+
+Alles im kostenlosen Cloudflare-Plan (100.000 Aufrufe/Tag, KV 1.000 Schreibvorgänge/Tag – reicht
+locker). Du brauchst [Node.js](https://nodejs.org/) (Version 18 oder neuer).
+
+1. **Cloudflare-Konto anlegen:** [dash.cloudflare.com/sign-up](https://dash.cloudflare.com/sign-up).
+   Danach im Dashboard links **Workers & Pages** öffnen und einmal eine
+   `workers.dev`-Subdomain wählen (z. B. `jakob180`).
+
+2. **Wrangler (Cloudflare-Werkzeug) installieren** – im Projektordner:
+
+   ```bash
+   cd worker
+   npm install
+   ```
+
+3. **Anmelden** (öffnet den Browser, dort „Allow" klicken):
+
+   ```bash
+   npx wrangler login
+   ```
+
+4. **KV-Speicher anlegen:**
+
+   ```bash
+   npx wrangler kv namespace create PUSH_KV
+   ```
+
+   Die ausgegebene `id` in `worker/wrangler.toml` bei `id = "HIER_DIE_KV_ID_EINTRAGEN"` einsetzen
+   (fragt Wrangler, ob es das selbst eintragen soll, einfach mit „Yes" bestätigen).
+
+5. **Erlaubte Adressen prüfen:** In `worker/wrangler.toml` steht unter `ALLOWED_ORIGINS` deine
+   GitHub-Pages-Adresse **ohne Pfad**: `https://jakob180.github.io`. Nur von dort (und von
+   `localhost:8080` zum Testen) darf die App den Worker aufrufen.
+
+6. **Hochladen:**
+
+   ```bash
+   npx wrangler deploy
+   ```
+
+   Am Ende steht die Adresse, z. B. `https://motorrad-push.jakob180.workers.dev` – notieren.
+
+7. **Schlüssel und Token erzeugen** (speichert alles als geheime Secrets bei Cloudflare):
+
+   ```bash
+   npm run setup
+   ```
+
+   Das Skript erzeugt die **VAPID-Schlüssel** (damit Apple/Google wissen, dass die Nachrichten von
+   dir kommen) und einen **Zugangs-Token**. Der private Schlüssel wird nie angezeigt und landet in
+   keiner Datei. Den am Ende angezeigten **Token** brauchst du gleich in der App.
+
+8. **Prüfen:** Die Worker-Adresse im Browser öffnen. Es sollte
+   `{"ok":true, … "ready":true}` erscheinen. Steht `"ready":false`, fehlt ein Secret oder KV.
+
+9. **In der App** (am iPhone, installierte App): **Einstellungen → Benachrichtigungen**
+   - Server-Adresse und Zugangs-Token eintragen, auswählen was du bekommen willst und die Uhrzeit
+   - **„Benachrichtigungen aktivieren"** → iPhone fragt nach der Erlaubnis → **Erlauben**
+   - **„Test-Nachricht senden"** – sollte sofort ankommen
+   - **„Morgen-Nachricht jetzt testen"** – zeigt, was morgen früh kommen würde
+   - Für die Fahrwetter-Nachricht muss oben ein **Wohnort** festgelegt sein.
+
+**Später Code ändern:** `cd worker` → `npx wrangler deploy`. **Logs live ansehen:**
+`npm run logs`. **Token verloren?** `npm run setup -- --token-only` und neu in der App eintragen.
+`npm run setup` ohne Zusatz erzeugt auch neue VAPID-Schlüssel – danach in der App
+Benachrichtigungen einmal deaktivieren und wieder aktivieren.
+
+**Tests ohne Cloudflare-Konto:** `cd worker` → `npm test` (prüft u. a. die Verschlüsselung gegen
+die offiziellen Testwerte aus RFC 8291, Token-Schutz, Cron-Zeiten mit Sommer-/Winterzeit).
+
+**Sicherheit & Datenschutz:** Jeder Aufruf braucht den Token, der Worker nimmt nur Anfragen von
+deiner App-Adresse an (CORS) und speichert nur: Push-Abo, Wohnort, Ampel-Grenzwerte und die Liste
+der Fälligkeiten. Server-Adresse und Token stehen nur auf dem Gerät und **nicht** im Backup.
 
 ## Lokal testen
 
@@ -245,5 +347,8 @@ nicht geöffnet wurde). Deshalb:
 | Änderungen am Code erscheinen nicht | `VERSION` in `sw.js` erhöhen bzw. in den Entwicklertools „Update on reload" aktivieren |
 | Leere Seite / Fehler in der Konsole | Läuft die App über einen Webserver (`http://localhost…`) und nicht als `file://`? |
 | Diagramme fehlen | Beim allerersten Start ist Internet nötig, damit Chart.js in den Cache kommt |
+| Keine Push-Nachrichten am iPhone | App über den Home-Bildschirm öffnen (nicht Safari), iOS ≥ 16.4, iPhone-Einstellungen → Mitteilungen → Motorrad → erlauben. In der App „Test-Nachricht senden". |
+| „Push-Server nicht erreichbar" | Worker-Adresse prüfen (im Browser öffnen), `ALLOWED_ORIGINS` in `worker/wrangler.toml` muss deine Pages-Adresse enthalten, danach `npx wrangler deploy` |
+| „Der Zugangs-Token stimmt nicht" | Token aus `npm run setup` neu eintragen (oder `npm run setup -- --token-only`) |
 | „Standortzugriff nicht erlaubt" | iPhone: Einstellungen → Datenschutz & Sicherheit → Ortungsdienste → Safari-Websites → „Beim Verwenden der App". Oder einen Wohnort festlegen. |
 | Daten am iPhone weg | Backup importieren (Einstellungen → Backup importieren) |
