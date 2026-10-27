@@ -6,7 +6,7 @@
 //   DELETE /api/device/:id            Gerät abmelden
 //   POST   /api/device/:id/test       Test-Nachricht senden
 //   POST   /api/device/:id/run        Morgen-Nachricht sofort erzeugen (zum Testen)
-//   POST   /api/ai/specs              Wartungsdaten eines Motorrads per KI recherchieren (ai.js)
+//   POST   /api/ai/specs              Wartungsdaten per KI recherchieren (ai.js; Groq oder Claude)
 //
 // Cron: läuft stündlich (UTC). Für jedes Gerät wird geprüft, ob in Europe/Vienna gerade die
 // gewünschte Uhrzeit ist – so stimmt die Zeit auch bei Sommer-/Winterzeit.
@@ -302,6 +302,9 @@ async function handle(request, env) {
       const result = await lookupSpecs(env, bike, {
         force: body.force === true,
         today: localNow(env.TIMEZONE || 'Europe/Vienna').date,
+        provider: body.provider === 'groq' ? 'groq' : 'anthropic',
+        // Schlüssel aus der App: nur für diese Anfrage, wird nicht gespeichert/geloggt
+        apiKey: typeof body.apiKey === 'string' ? body.apiKey.trim().slice(0, 300) : '',
       });
       return json(result, 200, cors);
     } catch (err) {

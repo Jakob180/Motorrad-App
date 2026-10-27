@@ -121,6 +121,7 @@ function aiInfo(meta, cached) {
     `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a>`).join(' · ');
   return `<div class="notice ai-info"><span aria-hidden="true">🤖</span><div>
       <b>KI-Recherche vom ${fmtDate(meta.aiAt)}</b> · Sicherheit: ${esc(meta.aiConfidence || '–')}
+      ${meta.aiModel ? `<br><span class="muted small">Modell: ${esc(meta.aiModel)}</span>` : ''}
       ${cached ? ' · aus dem Zwischenspeicher' : ''}
       ${meta.aiNotes ? `<br>${esc(meta.aiNotes)}` : ''}
       ${sources ? `<br><span class="small">Quellen: ${sources}</span>` : ''}
@@ -136,7 +137,8 @@ export async function openSpecsForm(bike, { autoAi = false } = {}) {
   const specs = bike.specs || {};
   const v = specs.values || {};
   let aiMeta = specs.aiAt
-    ? { aiAt: specs.aiAt, aiConfidence: specs.aiConfidence, aiNotes: specs.aiNotes, aiSources: specs.aiSources } : null;
+    ? { aiAt: specs.aiAt, aiConfidence: specs.aiConfidence, aiNotes: specs.aiNotes, aiSources: specs.aiSources, aiModel: specs.aiModel }
+    : null;
 
   const groups = GROUPS.map(([title, keys]) => `<div class="form-sub">${title}</div>
       ${keys.map((k) => field({ label: `${FIELD[k].icon} ${FIELD[k].label}`, name: k, value: v[k] || '', placeholder: FIELD[k].example })).join('')}`).join('');
@@ -165,12 +167,19 @@ export async function openSpecsForm(bike, { autoAi = false } = {}) {
           toast('Bitte zuerst beim Motorrad (Garage → Bearbeiten) Marke und Modell eintragen.', 'error', 6000);
           return;
         }
+        // Anbieter und Schlüssel aus den Einstellungen (nur auf diesem Gerät gespeichert)
+        const ai = { provider: 'groq', apiKey: '', ...((await db.getDeviceSettings()).ai || {}) };
+        if (ai.provider === 'groq' && !ai.apiKey) {
+          toast('Trag zuerst deinen Groq-Schlüssel ein: Einstellungen → 🤖 KI für Wartungsdaten.', 'error', 7000);
+          return;
+        }
         btn.disabled = true;
         btn.textContent = '✨ Recherchiere … (bis zu 1 Minute)';
         try {
           const { workerRequest } = await import('./push.js');
           const r = await workerRequest('POST', '/api/ai/specs', {
             brand: bike.brand, model: bike.model, year: bike.year || null, meter: bike.meter || 'km', force,
+            provider: ai.provider, apiKey: ai.apiKey,
           }, { timeout: 150000 });
           let filled = 0;
           let offered = 0;
@@ -197,7 +206,7 @@ export async function openSpecsForm(bike, { autoAi = false } = {}) {
               offered++;
             }
           }
-          aiMeta = { aiAt: r.fetchedAt, aiConfidence: r.confidence, aiNotes: r.notes, aiSources: r.sources };
+          aiMeta = { aiAt: r.fetchedAt, aiConfidence: r.confidence, aiNotes: r.notes, aiSources: r.sources, aiModel: r.model };
           box.innerHTML = aiInfo(aiMeta, r.cached);
           toast(filled || offered
             ? `${filled} Felder ausgefüllt${offered ? `, ${offered} Abweichungen zum Prüfen` : ''} – bitte kontrollieren und speichern.`

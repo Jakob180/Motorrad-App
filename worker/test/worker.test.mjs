@@ -108,10 +108,18 @@ const pushes = [];          // beim Push-Dienst angekommene Nachrichten (entschl
 let pushStatus = 201;       // Antwort des Push-Dienstes
 const claudeCalls = [];     // Anfragen an die Claude-API
 const claudeReplies = [];   // vorbereitete Antworten der Claude-API (Warteschlange)
+const groqCalls = [];       // Anfragen an die Groq-API
+const groqReplies = [];     // vorbereitete Antworten der Groq-API
 
 globalThis.fetch = async (input, init = {}) => {
   const url = String(input);
   if (url.startsWith('https://api.open-meteo.com/')) return new Response(JSON.stringify(fakeForecast()));
+  if (url.startsWith('https://api.groq.com/')) {
+    groqCalls.push({ headers: new Headers(init.headers), body: JSON.parse(init.body) });
+    const { status = 200, content = '', error } = groqReplies.shift();
+    const body = error ? { error: { message: error } } : { choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }] };
+    return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  }
   if (url.startsWith('https://api.anthropic.com/')) {
     claudeCalls.push({ url, headers: new Headers(init.headers), body: JSON.parse(init.body) });
     const { status = 200, body } = claudeReplies.shift();
@@ -319,7 +327,7 @@ await test('KI: ungültiger API-Schlüssel → klare Fehlermeldung', async () =>
   claudeReplies.push({ status: 401, body: { type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } } });
   const res = await askSpecs({ force: true });
   assert.equal(res.status, 502);
-  assert.match((await res.json()).error, /API-Schlüssel im Worker ist ungültig/);
+  assert.match((await res.json()).error, /Claude-API-Schlüssel ist ungültig/);
 });
 
 await test('KI: Tageslimit schützt vor Kosten', async () => {
@@ -329,6 +337,67 @@ await test('KI: Tageslimit schützt vor Kosten', async () => {
   assert.equal(res.status, 429);
   assert.match((await res.json()).error, /Tageslimit von 3/);
   assert.equal(claudeCalls.length, before);
+});
+
+// ---------- KI über Groq (Schlüssel aus der App) ----------
+
+const askGroq = (extra = {}) => askSpecs({ provider: 'groq', apiKey: 'gsk_test', ...extra });
+const groqNotes = 'Getriebeöl: SAE 10W-40, 0,8 l\nZweitaktöl: vollsynthetisch, Öltank\nZündkerze: NGK BR7ES\nMotoröl: unbekannt\n'
+  + 'Quellen: https://www.husqvarna-motorcycles.com/de/te300 【1†L2】';
+const groqJson = JSON.stringify({ ...specsInput, sources: [] }); // ohne Quellen → aus den Notizen
+
+await test('Groq ohne Schlüssel: Hinweis auf die Einstellungen', async () => {
+  env.AI_DAILY_LIMIT = '100';
+  const res = await askSpecs({ provider: 'groq' });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /Groq-Schlüssel in den Einstellungen/);
+});
+
+await test('Groq: 1) Browser-Suche, 2) striktes JSON – Schlüssel aus der App', async () => {
+  groqReplies.push({ content: groqNotes }, { content: groqJson });
+  const res = await askGroq();
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.model, 'openai/gpt-oss-120b');
+  assert.equal(data.specs.sparkPlug, 'NGK BR7ES');
+  assert.equal(data.sources[0].url, 'https://www.husqvarna-motorcycles.com/de/te300');
+  const [research, extract] = groqCalls.slice(-2);
+  assert.equal(research.headers.get('authorization'), 'Bearer gsk_test');
+  assert.deepEqual(research.body.tools, [{ type: 'browser_search' }]);
+  assert.equal(research.body.tool_choice, 'required');
+  assert.equal(research.body.model, 'openai/gpt-oss-120b');
+  assert.equal(extract.body.tools, undefined);
+  assert.equal(extract.body.response_format.type, 'json_schema');
+  assert.equal(extract.body.response_format.json_schema.strict, true);
+  assert.match(extract.body.messages[1].content, /Zündkerze: NGK BR7ES/);
+  // Schlüssel wird nirgends gespeichert
+  assert.ok(![...env.PUSH_KV.map.values()].some((v) => v.includes('gsk_test')));
+});
+
+await test('Groq: zweite Anfrage aus dem Cache, getrennt vom Claude-Cache', async () => {
+  const before = groqCalls.length;
+  const data = await (await askGroq()).json();
+  assert.equal(data.cached, true);
+  assert.equal(data.model, 'openai/gpt-oss-120b');
+  assert.equal(groqCalls.length, before);
+});
+
+await test('Groq: ungültiger Schlüssel und Gratis-Limit verständlich', async () => {
+  groqReplies.push({ status: 401, error: 'Invalid API Key' });
+  let res = await askGroq({ force: true });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /Groq-Schlüssel ist ungültig/);
+  groqReplies.push({ status: 429, error: 'Rate limit reached' });
+  res = await askGroq({ force: true });
+  assert.equal(res.status, 429);
+  assert.match((await res.json()).error, /Groq-Limit erreicht/);
+});
+
+await test('Groq: kaputtes JSON → Fehlermeldung statt Absturz', async () => {
+  groqReplies.push({ content: groqNotes }, { content: '{"kaputt":' });
+  const res = await askGroq({ force: true });
+  assert.equal(res.status, 502);
+  assert.match((await res.json()).error, /ungültige Daten/);
 });
 
 console.log(`\n${passed} Tests bestanden${process.exitCode ? ' – es gab Fehler!' : '.'}`);

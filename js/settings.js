@@ -133,6 +133,46 @@ function pushCard(cfg, home) {
   </div>`;
 }
 
+const AI_PROVIDERS = {
+  groq: { label: 'Groq (kostenloses Kontingent)', keyUrl: 'https://console.groq.com/keys', keyName: 'Groq-Schlüssel' },
+  anthropic: { label: 'Claude (kostenpflichtig)', keyUrl: 'https://console.anthropic.com/settings/keys', keyName: 'Claude-Schlüssel' },
+};
+
+/** KI für die Wartungsdaten: Anbieter und eigener Schlüssel (nur auf diesem Gerät) */
+function aiCard(ai) {
+  const p = AI_PROVIDERS[ai.provider] || AI_PROVIDERS.groq;
+  return `<div class="card">
+    <h3>🤖 KI für Wartungsdaten</h3>
+    <p class="muted small">Recherchiert Öl, Filter, Reifen &amp; Co. für dein Motorrad (Garage → Wartungsdaten → „Mit KI ausfüllen").
+      Läuft über deinen Server (Benachrichtigungen). Der Schlüssel bleibt nur auf diesem Gerät und ist nicht im Backup.</p>
+    <div class="kv"><span class="k">Schlüssel</span><span class="v">${ai.apiKey ? 'gespeichert ✅' : 'fehlt'}</span></div>
+    <form id="ai-form" class="mt" novalidate>
+      ${field({ label: 'Anbieter', name: 'provider', type: 'select', value: ai.provider,
+        options: Object.entries(AI_PROVIDERS).map(([k, v]) => [k, v.label]) })}
+      ${field({ label: p.keyName, name: 'apiKey', type: 'password', value: ai.apiKey,
+        placeholder: ai.provider === 'groq' ? 'gsk_…' : 'sk-ant-…', attrs: 'autocapitalize="off" spellcheck="false" autocomplete="off"',
+        hint: `Erstellen: <a href="${p.keyUrl}" target="_blank" rel="noopener">${p.keyUrl.replace('https://', '')}</a>`
+          + (ai.provider === 'anthropic' ? ' · leer lassen, wenn der Schlüssel im Worker gesetzt ist' : '') })}
+      <button type="submit" class="btn btn-primary btn-block">${ICONS.check} Speichern</button>
+    </form>
+  </div>`;
+}
+
+/** KI-Einstellungen speichern (mit Plausibilitätsprüfung des Schlüssels) */
+async function onAiSubmit(e) {
+  e.preventDefault();
+  const form = e.target;
+  clearFieldErrors(form);
+  const provider = form.elements.provider.value;
+  const apiKey = form.elements.apiKey.value.trim();
+  if (provider === 'groq' && !apiKey) { setFieldError(form, 'apiKey', 'Bitte deinen Groq-Schlüssel eintragen.'); return; }
+  if (provider === 'groq' && apiKey.startsWith('sk-ant-')) { setFieldError(form, 'apiKey', 'Das ist ein Claude-Schlüssel – Anbieter auf Claude stellen.'); return; }
+  if (provider === 'anthropic' && apiKey.startsWith('gsk_')) { setFieldError(form, 'apiKey', 'Das ist ein Groq-Schlüssel – Anbieter auf Groq stellen.'); return; }
+  await db.saveDeviceSettings({ ai: { provider, apiKey } });
+  toast('KI-Einstellungen gespeichert', 'ok');
+  await render();
+}
+
 /** Push-Formular lesen (synchron – wichtig für die iOS-Erlaubnisabfrage) */
 function readPushForm(form) {
   const f = form.elements;
@@ -154,9 +194,10 @@ export async function show() {
 }
 
 async function render() {
-  const [settings, counts, storage, version, pushCfg] = await Promise.all([
-    db.getSettings(), db.counts(), storageInfo(), swVersion(), getPushConfig(),
+  const [settings, counts, storage, version, pushCfg, device] = await Promise.all([
+    db.getSettings(), db.counts(), storageInfo(), swVersion(), getPushConfig(), db.getDeviceSettings(),
   ]);
+  const ai = { provider: 'groq', apiKey: '', ...(device.ai || {}) };
   backupFile = await prepareBackup();
 
   const last = settings.lastBackup;
@@ -167,6 +208,7 @@ async function render() {
     ${ampelCard(settings.thresholds)}
     ${homeCard(settings.home)}
     ${pushCard(pushCfg, settings.home)}
+    ${aiCard(ai)}
     ${routeCard(settings)}
     <div class="card">
       <h3>💾 Datensicherung</h3>
@@ -340,6 +382,10 @@ async function onSubmit(e) {
     await onPushSubmit(e);
     return;
   }
+  if (e.target.id === 'ai-form') {
+    await onAiSubmit(e);
+    return;
+  }
   if (e.target.id !== 'ampel-form') return;
   e.preventDefault();
   const form = e.target;
@@ -367,6 +413,16 @@ async function onSubmit(e) {
 }
 
 async function onChange(e) {
+  if (e.target.name === 'provider' && e.target.form?.id === 'ai-form') {
+    // Beschriftung und Link zum Schlüssel an den gewählten Anbieter anpassen
+    const p = AI_PROVIDERS[e.target.value];
+    const wrap = e.target.form.querySelector('[data-field="apiKey"]');
+    wrap.querySelector('.lbl').textContent = p.keyName;
+    wrap.querySelector('input').placeholder = e.target.value === 'groq' ? 'gsk_…' : 'sk-ant-…';
+    wrap.querySelector('.hint').innerHTML = `Erstellen: <a href="${p.keyUrl}" target="_blank" rel="noopener">${p.keyUrl.replace('https://', '')}</a>`
+      + (e.target.value === 'anthropic' ? ' · leer lassen, wenn der Schlüssel im Worker gesetzt ist' : '');
+    return;
+  }
   if (e.target.name === 'avgSpeed') {
     await db.saveSettings({ avgSpeed: Number(e.target.value) });
     toast(`Durchschnitt: ${e.target.value} km/h`, 'ok');

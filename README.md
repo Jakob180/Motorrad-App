@@ -39,7 +39,7 @@ worker/             Push-Server (Cloudflare Worker) – wird NICHT über GitHub 
   wrangler.toml     Worker-Konfiguration (KV, Cron, erlaubte Adressen)
   src/index.js      API, stündlicher Cron, Morgen-Nachricht (nutzt js/ampel.js mit)
   src/webpush.js    Web-Push-Verschlüsselung (RFC 8291) und VAPID – ohne externe Bibliothek
-  src/ai.js         KI-Recherche der Wartungsdaten (Claude + Websuche), Cache, Tageslimit
+  src/ai.js         KI-Recherche der Wartungsdaten (Groq oder Claude, mit Websuche), Cache, Tageslimit
   scripts/setup.mjs erzeugt VAPID-Schlüssel + Token und speichert sie als Secrets
   test/             Tests (npm test) – laufen ohne Cloudflare-Konto
 ```
@@ -247,41 +247,41 @@ Ritzel, Reifen, Reifendruck, Bremsflüssigkeit und -beläge.
 - **🛒 Teile** bei jedem Service-Intervall zeigt, was du für genau diese Wartung brauchst (z. B. beim
   Ölwechsel Öl + Filter, beim Kette-Schmieren Kettenspray), inkl. „zuletzt verwendet" aus dem Logbuch
   und Such-Links zu **Louis, Polo, Amazon** und einem **Preisvergleich**. Gekauft wird im Shop selbst.
-- **✨ Mit KI ausfüllen** lässt Claude die Daten im Web recherchieren (Herstellerangaben, Handbücher).
+- **✨ Mit KI ausfüllen** lässt eine KI (Groq oder Claude) die Daten im Web recherchieren (Herstellerangaben, Handbücher).
   Leere Felder werden ausgefüllt, abweichende Werte nur als Vorschlag zum Übernehmen angezeigt,
   mit Quellen und Einschätzung der Sicherheit. **Immer mit dem Handbuch abgleichen** – falsches Öl
   (z. B. Autoöl bei Nasskupplung) kann teuer werden.
 
 ### KI einrichten (einmalig)
 
-Die Anfrage läuft über deinen Worker, damit der API-Schlüssel nie in der App steht.
+Die Anfrage läuft immer über deinen Worker (Server-Adresse und Token wie bei den Benachrichtigungen).
+Der Worker muss dafür einmal mit dem aktuellen Code hochgeladen sein: `cd worker` → `npx wrangler deploy`.
 
-1. Auf [console.anthropic.com](https://console.anthropic.com) ein Konto anlegen, unter **Billing**
-   etwas Guthaben aufladen (z. B. 5 $) und unter **API Keys** einen Schlüssel erstellen.
-2. Im Ordner `worker`:
+**Groq (Standard, kostenloses Kontingent):**
 
-   ```bash
-   npx wrangler secret put ANTHROPIC_API_KEY
-   ```
+1. Auf [console.groq.com](https://console.groq.com) anmelden und unter **API Keys**
+   ([console.groq.com/keys](https://console.groq.com/keys)) einen Schlüssel erstellen (beginnt mit `gsk_`).
+2. In der App: **Einstellungen → 🤖 KI für Wartungsdaten** → Anbieter **Groq** → Schlüssel einfügen → Speichern.
 
-   (Schlüssel einfügen, Enter.) Danach den Worker neu hochladen:
+Verwendet wird `openai/gpt-oss-120b` mit Groqs eingebauter Browser-Suche. Groq kann Websuche und
+strukturierte Ausgabe nicht im selben Aufruf, daher zwei Schritte: erst recherchieren, dann die Notizen
+in ein festes JSON-Schema übertragen. Im Gratis-Kontingent gelten Limits pro Minute/Tag – bei
+„Groq-Limit erreicht" einfach später nochmal versuchen. Laut Groq-Doku sind die früheren
+„compound"-Modelle seit 21.09.2026 abgeschaltet, deshalb gpt-oss.
 
-   ```bash
-   npx wrangler deploy
-   ```
+**Claude (kostenpflichtig, meist genauer):** Anbieter **Claude** wählen und einen Schlüssel von
+[console.anthropic.com](https://console.anthropic.com) eintragen (Guthaben nötig) – oder das Feld leer
+lassen und den Schlüssel im Worker hinterlegen: `npx wrangler secret put ANTHROPIC_API_KEY`.
+Verwendet wird Claude Opus 5.5 mit Websuche, grob **10–40 Cent** pro Recherche; lehnt das Modell
+ab, übernimmt automatisch ein Ersatzmodell (serverseitiges Fallback).
 
-3. Prüfen: Die Worker-Adresse im Browser zeigt jetzt `"ai":true`.
+**Für beide:** Ergebnisse werden pro Motorrad **30 Tage** im Worker gespeichert – erneutes Öffnen
+kostet nichts und zählt nicht zum Limit. Ein **Tageslimit** von 20 Recherchen schützt vor Kosten bzw.
+dem Gratis-Limit (anpassbar über `AI_DAILY_LIMIT` in `wrangler.toml` unter `[vars]`).
 
-In der App braucht es dieselbe Server-Adresse und denselben Token wie für die Benachrichtigungen.
-
-**Kosten:** Verwendet wird Claude Opus 5.5 ($4 / $20 pro 1 Mio. Ein-/Ausgabe-Token) mit Websuche
-($10 pro 1.000 Suchen, max. 5 pro Recherche). Eine Recherche kostet grob **10–40 Cent**. Ergebnisse
-werden pro Modell **30 Tage** im Worker gespeichert – erneutes Öffnen kostet nichts. Ein **Tageslimit**
-von 20 Recherchen schützt vor Überraschungen (anpassbar über `AI_DAILY_LIMIT` in `wrangler.toml`
-unter `[vars]`). Lehnt das Modell eine Anfrage ab, übernimmt automatisch ein Ersatzmodell
-(serverseitiges Fallback der API).
-
-**Datenschutz:** An Anthropic gehen nur Marke, Modell, Baujahr und ob nach km oder Bh gewartet wird.
+**Schlüssel & Datenschutz:** Der Schlüssel liegt nur auf deinem Gerät (nicht im Backup), wird bei
+jeder Recherche über deine Server-Verbindung mitgeschickt und vom Worker weder gespeichert noch
+geloggt. An den KI-Anbieter gehen nur Marke, Modell, Baujahr und ob nach km oder Bh gewartet wird.
 
 ## Lokal testen
 

@@ -1,11 +1,15 @@
-// ai.js – KI-Recherche der Wartungsdaten eines Motorrads (Öl, Filter, Reifen, Kette …) mit Claude.
-// Läuft im Worker, damit der API-Schlüssel geheim bleibt. Claude sucht im Web nach den
-// Herstellerangaben und liefert das Ergebnis über ein strikt definiertes Werkzeug zurück.
-// Ergebnisse werden 30 Tage in KV gecacht, ein Tageslimit schützt vor unerwarteten Kosten.
+// ai.js – KI-Recherche der Wartungsdaten eines Motorrads (Öl, Filter, Reifen, Kette …).
+// Zwei Anbieter:
+//   groq      – openai/gpt-oss-120b mit eingebauter Browser-Suche (Groq-Schlüssel kommt aus der App)
+//   anthropic – Claude mit Websuche (Schlüssel aus der App oder als Worker-Secret ANTHROPIC_API_KEY)
+// Schlüssel aus der App werden nur für die Anfrage verwendet, nie gespeichert oder geloggt.
+// Ergebnisse werden 30 Tage in KV gecacht, ein Tageslimit schützt vor Kosten bzw. Gratis-Limits.
 
 import Anthropic from '@anthropic-ai/sdk';
 
 const MODEL = 'claude-opus-5-5';
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODEL = 'openai/gpt-oss-120b';
 const CACHE_TTL = 30 * 86400;     // Sekunden
 const DEFAULT_DAILY_LIMIT = 20;   // KI-Abfragen pro Tag (Variable AI_DAILY_LIMIT)
 
@@ -108,12 +112,16 @@ function collectSources(content) {
   return out;
 }
 
-/** Eine Recherche bei Claude (Websuche + submit_specs), inkl. pause_turn-Fortsetzung */
-async function askClaude(env, bike) {
-  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 1 });
-  const desc = `${bike.brand} ${bike.model}${bike.year ? `, Baujahr ${bike.year}` : ''}`
+/** Beschreibung des Motorrads für die Anfrage */
+function describe(bike) {
+  return `${bike.brand} ${bike.model}${bike.year ? `, Baujahr ${bike.year}` : ''}`
     + (bike.meter === 'h' ? ' (wird nach Betriebsstunden gewartet, vermutlich Enduro/Offroad)' : '');
-  const messages = [{ role: 'user', content: `Motorrad: ${desc}. Ermittle die Wartungsdaten.` }];
+}
+
+/** Eine Recherche bei Claude (Websuche + submit_specs), inkl. pause_turn-Fortsetzung */
+async function askClaude(apiKey, bike) {
+  const client = new Anthropic({ apiKey, maxRetries: 1 });
+  const messages = [{ role: 'user', content: `Motorrad: ${describe(bike)}. Ermittle die Wartungsdaten.` }];
   const found = [];
 
   for (let round = 0; round < 4; round++) {
@@ -148,17 +156,94 @@ async function askClaude(env, bike) {
   throw new AiError('Die KI hat keine Wartungsdaten geliefert.', 502);
 }
 
+// ---------- Groq ----------
+
+const GROQ_RESEARCH = `${SYSTEM.split('\n').slice(0, 2).join('\n')}
+Schreib das Ergebnis als kurze Liste auf Deutsch (Feld: Wert), z. B. Motoröl, Ölmenge, Ölfilter, Getriebeöl,
+Zweitaktöl, Luftfilter, Zündkerze, Kühlmittel, Batterie, Kette, Ritzel/Kettenrad, Reifen vorne/hinten,
+Reifendruck, Bremsflüssigkeit, Bremsbeläge vorne/hinten. Schreib "unbekannt", wenn du etwas nicht verlässlich
+findest – lieber unbekannt als geraten. Zweitakter haben kein Motoröl im üblichen Sinn, sondern Getriebeöl und
+Zweitaktöl. Nenne am Ende unter "Quellen:" die vollständigen URLs, die du verwendet hast.`;
+
+const GROQ_EXTRACT = `Übertrage die Recherche-Notizen zu einem Motorrad in das vorgegebene JSON-Schema.
+Übernimm nur Angaben, die in den Notizen stehen – nichts ergänzen oder erfinden. "unbekannt" oder fehlende
+Angaben → leerer String "". Werte kurz, auf Deutsch, metrische Einheiten, Dezimalkomma.
+sources: die in den Notizen genannten URLs (höchstens 5). confidence: hoch nur bei Herstellerquellen.`;
+
+/** Aufruf der Groq-API (OpenAI-kompatibel) mit verständlichen Fehlern */
+async function groqCall(apiKey, body) {
+  let res;
+  try {
+    res = await fetch(GROQ_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new AiError('Groq ist nicht erreichbar.', 502);
+  }
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) throw new AiError('Der Groq-Schlüssel ist ungültig – bitte in den Einstellungen prüfen.', 400);
+  if (res.status === 429) throw new AiError('Groq-Limit erreicht (Gratis-Kontingent) – bitte später nochmal versuchen.', 429);
+  if (!res.ok) throw new AiError(`Groq meldet einen Fehler (${res.status}): ${clean(data.error?.message, 150)}`, 502);
+  return data.choices?.[0]?.message?.content || '';
+}
+
+/** Groq: 1) recherchieren mit Browser-Suche, 2) Notizen in striktes JSON überführen */
+async function askGroq(apiKey, bike) {
+  const notes = await groqCall(apiKey, {
+    model: GROQ_MODEL,
+    messages: [
+      { role: 'system', content: GROQ_RESEARCH },
+      { role: 'user', content: `Motorrad: ${describe(bike)}. Ermittle die Wartungsdaten.` },
+    ],
+    tools: [{ type: 'browser_search' }],
+    tool_choice: 'required',
+    reasoning_effort: 'low', // empfohlen von Groq: kürzere Suche, weniger Token
+    max_completion_tokens: 4000,
+  });
+  if (!notes.trim()) throw new AiError('Groq hat keine Recherche geliefert.', 502);
+
+  // Browser-Suche und strukturierte Ausgabe gehen bei Groq nicht im selben Aufruf
+  const json = await groqCall(apiKey, {
+    model: GROQ_MODEL,
+    messages: [
+      { role: 'system', content: GROQ_EXTRACT },
+      { role: 'user', content: `Motorrad: ${describe(bike)}\n\nRecherche-Notizen:\n${notes.slice(0, 12000)}` },
+    ],
+    response_format: {
+      type: 'json_schema',
+      json_schema: { name: 'wartungsdaten', strict: true, schema: SUBMIT_TOOL.input_schema },
+    },
+    reasoning_effort: 'low',
+    max_completion_tokens: 3000,
+  });
+  let input;
+  try {
+    input = JSON.parse(json);
+  } catch {
+    throw new AiError('Groq hat ungültige Daten geliefert – bitte nochmal versuchen.', 502);
+  }
+  const found = [...new Set(notes.match(/https?:\/\/[^\s)\]】>"'<,]+/g) || [])].map((url) => ({ title: url, url }));
+  return { ...sanitize(input, found), model: GROQ_MODEL };
+}
+
 /**
  * Wartungsdaten für ein Motorrad: aus dem Cache oder frisch recherchiert.
  * bike: { brand, model, year, meter }   force: Cache ignorieren (zählt zum Tageslimit)
+ * provider: 'groq' | 'anthropic'   apiKey: Schlüssel aus der App (optional bei anthropic)
  */
-export async function lookupSpecs(env, bike, { force = false, today }) {
-  if (!env.ANTHROPIC_API_KEY) {
-    throw new AiError('Die KI ist am Server noch nicht eingerichtet (ANTHROPIC_API_KEY fehlt) – siehe README.', 503);
+export async function lookupSpecs(env, bike, { force = false, today, provider = 'anthropic', apiKey = '' }) {
+  const useGroq = provider === 'groq';
+  const key = useGroq ? apiKey : (apiKey || env.ANTHROPIC_API_KEY);
+  if (!key) {
+    throw useGroq
+      ? new AiError('Bitte zuerst deinen Groq-Schlüssel in den Einstellungen eintragen.', 400)
+      : new AiError('Kein Claude-Schlüssel: in der App eintragen oder ANTHROPIC_API_KEY im Worker setzen – siehe README.', 503);
   }
-  const key = `ai:specs:${norm(bike.brand)}|${norm(bike.model)}|${bike.year || ''}|${bike.meter === 'h' ? 'h' : 'km'}`;
+  const cacheKey = `ai:specs:${useGroq ? 'groq' : 'claude'}|${norm(bike.brand)}|${norm(bike.model)}|${bike.year || ''}|${bike.meter === 'h' ? 'h' : 'km'}`;
   if (!force) {
-    const cached = await env.PUSH_KV.get(key, 'json');
+    const cached = await env.PUSH_KV.get(cacheKey, 'json');
     if (cached) return { ...cached, cached: true };
   }
 
@@ -171,15 +256,15 @@ export async function lookupSpecs(env, bike, { force = false, today }) {
 
   let result;
   try {
-    result = await askClaude(env, bike);
+    result = useGroq ? await askGroq(key, bike) : await askClaude(key, bike);
   } catch (err) {
     if (err instanceof AiError) throw err;
-    if (err instanceof Anthropic.AuthenticationError) throw new AiError('Der Anthropic-API-Schlüssel im Worker ist ungültig.', 502);
+    if (err instanceof Anthropic.AuthenticationError) throw new AiError('Der Claude-API-Schlüssel ist ungültig.', 502);
     if (err instanceof Anthropic.RateLimitError) throw new AiError('Die KI ist gerade ausgelastet – bitte in einer Minute nochmal.', 429);
     if (err instanceof Anthropic.APIError) throw new AiError(`Die KI meldet einen Fehler (${err.status ?? 'Verbindung'}).`, 502);
     throw err;
   }
   const record = { ...result, fetchedAt: new Date().toISOString() };
-  await env.PUSH_KV.put(key, JSON.stringify(record), { expirationTtl: CACHE_TTL });
+  await env.PUSH_KV.put(cacheKey, JSON.stringify(record), { expirationTtl: CACHE_TTL });
   return { ...record, cached: false };
 }
